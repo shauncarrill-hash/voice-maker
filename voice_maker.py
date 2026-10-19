@@ -64,8 +64,26 @@ def download_clip(url, start, end, out_wav):
             "quiet": True,
             "noprogress": True,
         }
-        with yt_dlp.YoutubeDL(options) as ydl:
-            ydl.download([url])
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                ydl.download([url])
+        except yt_dlp.utils.DownloadError as exc:
+            if "not a bot" not in str(exc) and "Sign in" not in str(exc):
+                raise
+            # YouTube sometimes wants a signed-in session; borrow cookies from a local browser.
+            for browser in ("firefox", "edge", "chrome", "brave"):
+                try:
+                    with yt_dlp.YoutubeDL({**options, "cookiesfrombrowser": (browser,)}) as ydl:
+                        ydl.download([url])
+                    break
+                except Exception:
+                    continue
+            else:
+                raise RuntimeError(
+                    "YouTube asked to confirm you're not a bot. Sign in to YouTube in Firefox or Edge, "
+                    "close the browser, and try again. Or download the audio yourself and use "
+                    "'Use a local audio file instead'."
+                ) from exc
         files = os.listdir(tmp_dir)
         if not files:
             raise RuntimeError("The download finished but no audio file was saved.")
