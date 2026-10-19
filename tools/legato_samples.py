@@ -60,10 +60,14 @@ def main(out_dir):
     variants = {"1_chatterbox": join(takes)}
     for n, preset in enumerate(("legato", "meow", "kitten"), 2):
         variants[f"{n}_chatterbox+{preset}"] = join([legato(t, sr, **PRESETS[preset]) for t in takes])
+    extras = {"purr": dict(purr=0.8), "trill": dict(trill=0.3), "chirp": dict(chirp=0.25),
+              "purr+trill+chirp": dict(purr=0.8, trill=0.3, chirp=0.25)}
+    for n, (name, sounds) in enumerate(extras.items(), 5):
+        variants[f"{n}_chatterbox+meow+{name}"] = join([legato(t, sr, **PRESETS["meow"], **sounds) for t in takes])
     lines = []
     for label, audio in variants.items():
         save_mp3(audio, sr, os.path.join(out_dir, label + ".mp3"))
-        lines.append(f"{label:28s} {stats(audio, sr)}")
+        lines.append(f"{label:40s} {stats(audio, sr)}")
         print(lines[-1], flush=True)
     with open(os.path.join(out_dir, "report.txt"), "w") as f:
         f.write("\n".join(lines) + "\n")

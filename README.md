@@ -46,7 +46,7 @@ With an NVIDIA GPU each phrase takes a few seconds. On CPU it works but expect t
 
 **Sliders:** *Exaggeration* raises emotion and intensity (0.5 is neutral). *CFG / pace* at lower values (about 0.3) gives slower, more deliberate speech, which helps if the reference speaker talks fast.
 
-**Cat legato:** post-processing for a cat-like, hummed delivery. The voice keeps humming through the gaps between words, holds vowels longer and slides down a little on each syllable, like a meow. *Legato* only closes the gaps, *Meow* is the full effect, and *Kitten* is higher and brighter. Pauses between sentences are kept. On the command line add `--legato meow`, or run `python cat_legato.py in.mp3 out.mp3 --preset meow` on any recording (flags such as `--pitch 5 --stretch 2 --fall 4` fine-tune it).
+**Cat legato:** post-processing for a cat-like, hummed delivery. The voice keeps humming through the gaps between words, holds vowels longer and slides down a little on each syllable, like a meow. *Legato* only closes the gaps, *Meow* is the full effect, and *Kitten* is higher and brighter. Pauses between sentences are kept. The tick boxes add extra cat sounds on top: a low rolled *purr* at the end of each sentence, *trills* (a rolled "brrp" rising into some syllables) and *chirps* (a quick upward pitch flick, "mrrp?"). On the command line add `--legato meow` (and `--purr 0.8 --trill 0.3 --chirp 0.25`), or run `python cat_legato.py in.mp3 out.mp3 --preset meow` on any recording (flags such as `--pitch 5 --stretch 2 --fall 4` fine-tune it).
 
 ## Command line
 

@@ -159,11 +159,14 @@ class VoiceCloner:
             self.model.prepare_conditionals(wav_path, exaggeration=exaggeration)
             self._reference = key
 
-    def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None):
+    def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None, cat_sounds=None):
         """Return a mono float32 waveform at self.sample_rate for text.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
+        cat_sounds: optional {"purr": 0..1, "trill": 0..1, "chirp": 0..1} added on top of the preset.
         """
+        if cat_sounds and any(cat_sounds.values()) and not legato:
+            legato = "legato"
         if self._reference is None:
             raise RuntimeError("Call set_reference() with a voice clip first.")
         import torch
@@ -171,7 +174,7 @@ class VoiceCloner:
         if legato:
             from cat_legato import PRESETS, legato as hum_through
 
-            settings = PRESETS[legato]
+            settings = {**PRESETS[legato], **(cat_sounds or {})}
             # One sentence at a time so the pauses between sentences survive the effect.
             chunks = [piece for sentence in re.split(r"(?<=[.!?])\s+", text) for piece in split_text(sentence)]
         else:
@@ -215,6 +218,8 @@ def main(argv=None):
     say.add_argument("--exaggeration", type=float, default=0.5)
     say.add_argument("--cfg-weight", type=float, default=0.5)
     say.add_argument("--legato", choices=["legato", "meow", "kitten"], help="hum through word gaps (cat voice)")
+    for sound in ("purr", "trill", "chirp"):
+        say.add_argument(f"--{sound}", type=float, default=0.0, help=f"0..1 amount of cat {sound}s (implies --legato)")
     args = parser.parse_args(argv)
 
     if args.cmd == "download":
@@ -223,7 +228,7 @@ def main(argv=None):
     cloner = VoiceCloner(device=args.device, model_dir=args.model_dir)
     cloner.set_reference(args.ref, exaggeration=args.exaggeration)
     cloner.speak_to_mp3(args.text, args.out, exaggeration=args.exaggeration, cfg_weight=args.cfg_weight,
-                        legato=args.legato)
+                        legato=args.legato, cat_sounds={"purr": args.purr, "trill": args.trill, "chirp": args.chirp})
     print(f"Saved {args.out}")
     return 0
 

@@ -28,6 +28,8 @@ else:
 # "Cat legato" post-processing (cat_legato.py): hums through the gaps between words.
 LEGATO_CHOICES = ["Off", "Legato (close gaps)", "Meow", "Kitten (higher)"]
 LEGATO_PRESETS = {"Off": None, "Legato (close gaps)": "legato", "Meow": "meow", "Kitten (higher)": "kitten"}
+# Extra cat sounds (checkboxes) and how strongly each is applied.
+CAT_SOUNDS = [("purr", "Purr at sentence ends", 0.8), ("trill", "Trills (brrp)", 0.3), ("chirp", "Chirps", 0.25)]
 
 
 def parse_timestamp(text):
@@ -155,6 +157,12 @@ class App:
         self.legato_var = tk.StringVar(value=LEGATO_CHOICES[0])
         ttk.Combobox(opts, textvariable=self.legato_var, values=LEGATO_CHOICES, state="readonly", width=24).grid(
             row=1, column=1, columnspan=3, sticky="w", padx=4, pady=(6, 0))
+        sounds = ttk.Frame(opts)
+        sounds.grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 0))
+        self.sound_vars = {}
+        for key, label, _ in CAT_SOUNDS:
+            self.sound_vars[key] = tk.BooleanVar(value=False)
+            ttk.Checkbutton(sounds, text=label, variable=self.sound_vars[key]).pack(side="left", padx=(0, 12))
         for var, lbl in ((self.exag_var, self.exag_lbl), (self.cfg_var, self.cfg_lbl)):
             var.trace_add("write", lambda *_, v=var, l=lbl: l.config(text=f"{v.get():.2f}"))
             lbl.config(text=f"{var.get():.2f}")
@@ -300,6 +308,7 @@ class App:
         exaggeration = self.exag_var.get()
         cfg_weight = self.cfg_var.get()
         legato = LEGATO_PRESETS[self.legato_var.get()]
+        cat_sounds = {key: amount if self.sound_vars[key].get() else 0.0 for key, _, amount in CAT_SOUNDS}
         reference = self.reference_wav
 
         def task():
@@ -314,6 +323,7 @@ class App:
                     exaggeration=exaggeration,
                     cfg_weight=cfg_weight,
                     legato=legato,
+                    cat_sounds=cat_sounds,
                 )
             self.set_status(f"Done. Saved {len(phrases)} MP3 file(s) to {out_dir}")
 
