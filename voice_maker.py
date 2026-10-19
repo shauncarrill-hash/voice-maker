@@ -291,22 +291,33 @@ class App:
         self.run_in_background(task)
 
 
+def run_command_line(args):
+    """Command line mode, e.g. VoiceMaker.exe say --ref clip.wav --out hi.mp3 "Hi"
+    or VoiceMaker.exe clip URL START END out.wav. Errors are printed (to the log
+    when packaged) instead of raised, so a windowed .exe never hangs on an error box."""
+    import traceback
+
+    import chatterbox_harness
+
+    try:
+        if args[0] == "clip":
+            _, url, start, end, out_wav = args
+            download_clip(url, parse_timestamp(start), parse_timestamp(end), os.path.abspath(out_wav))
+            print(f"Saved {out_wav}")
+            return 0
+        return chatterbox_harness.main(args)
+    except BaseException:
+        traceback.print_exc()
+        return 1
+
+
 def main():
     if FROZEN and sys.stdout is None:
         # A windowed .exe has no console; send library output (progress bars, warnings) to a log file.
         os.makedirs(DATA_DIR, exist_ok=True)
         sys.stdout = sys.stderr = open(os.path.join(DATA_DIR, "voice_maker.log"), "a", encoding="utf-8", buffering=1)
-    if len(sys.argv) > 1 and sys.argv[1] in ("download", "say"):
-        # Command line mode, e.g. VoiceMaker.exe say --ref clip.wav --out hi.mp3 "Hi"
-        import chatterbox_harness
-
-        sys.exit(chatterbox_harness.main(sys.argv[1:]))
-    if len(sys.argv) == 6 and sys.argv[1] == "clip":
-        # VoiceMaker.exe clip URL START END out.wav
-        _, _, url, start, end, out_wav = sys.argv
-        download_clip(url, parse_timestamp(start), parse_timestamp(end), os.path.abspath(out_wav))
-        print(f"Saved {out_wav}")
-        return
+    if len(sys.argv) > 1 and sys.argv[1] in ("download", "say", "clip"):
+        sys.exit(run_command_line(sys.argv[1:]))
     if not ffmpeg_exe():
         tk.Tk().withdraw()
         messagebox.showerror("Voice Maker", "ffmpeg was not found on your PATH. Install it first (see README).")

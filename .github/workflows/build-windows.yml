@@ -44,15 +44,28 @@ jobs:
 
       - name: Smoke test (real model, CPU)
         if: matrix.edition == 'cpu'
+        timeout-minutes: 60
         run: |
           $exe = "dist\VoiceMaker\VoiceMaker.exe"
+          $log = "$env:LOCALAPPDATA\VoiceMaker\voice_maker.log"
+          function Run-App($argList, $minutes) {
+            $p = Start-Process $exe -ArgumentList $argList -PassThru
+            if (-not $p.WaitForExit($minutes * 60000)) { Stop-Process -Id $p.Id -Force; Write-Host "::warning::VoiceMaker $($argList[0]) timed out after $minutes min" }
+          }
+          function Show-Log($title) {
+            # Shown as an annotation so the result is readable from the API.
+            $tail = (Get-Content $log -Tail 25 -ErrorAction SilentlyContinue) -join "%0A"
+            Write-Host "::notice title=$title::$tail"
+          }
           & $env:FFMPEG_BIN -loglevel error -f lavfi -i "sine=frequency=160:duration=8" -ar 24000 -ac 1 ref.wav
-          Start-Process $exe -ArgumentList 'clip','https://www.youtube.com/watch?v=jNQXAC9IVRw','0:01','0:12','yt.wav' -Wait
-          if (Test-Path yt.wav) { Write-Host "YouTube clip download worked"; $ref = "yt.wav" } else { Write-Host "YouTube download blocked on this runner, using a test tone"; $ref = "ref.wav" }
-          $p = Start-Process $exe -ArgumentList 'say','--device','cpu','--ref',$ref,'--out','smoke.mp3','"Hello, this is a test of Voice Maker."' -Wait -PassThru
-          Get-Content "$env:LOCALAPPDATA\VoiceMaker\voice_maker.log" -Tail 40 -ErrorAction SilentlyContinue
-          if (-not (Test-Path smoke.mp3)) { throw "Smoke test produced no MP3 (exit code $($p.ExitCode))" }
-          & ($env:FFMPEG_BIN -replace 'ffmpeg.exe$','ffprobe.exe') -v error -show_entries format=duration -of csv=p=0 smoke.mp3
+          Run-App @('clip','https://www.youtube.com/watch?v=jNQXAC9IVRw','0:01','0:12','yt.wav') 5
+          if (Test-Path yt.wav) { Write-Host "::notice::YouTube clip download worked"; $ref = "yt.wav" } else { Show-Log "YouTube clip log"; $ref = "ref.wav" }
+          $start = Get-Date
+          Run-App @('say','--device','cpu','--ref',$ref,'--out','smoke.mp3','"Hello, this is a test of Voice Maker."') 45
+          Show-Log "Voice generation log"
+          if (-not (Test-Path smoke.mp3)) { throw "Smoke test produced no MP3" }
+          $dur = & ($env:FFMPEG_BIN -replace 'ffmpeg.exe$','ffprobe.exe') -v error -show_entries format=duration -of csv=p=0 smoke.mp3
+          Write-Host "::notice::Smoke test MP3: $dur seconds, generated in $([int]((Get-Date)-$start).TotalSeconds) s (includes model download)"
 
       - name: Upload smoke test audio
         if: matrix.edition == 'cpu'
