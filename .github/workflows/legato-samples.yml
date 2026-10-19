@@ -2,10 +2,8 @@ name: Cat legato samples
 
 # Renders before/after samples of cat_legato.py with the real Chatterbox model
 # and commits them to samples/legato on the same branch.
+# Run it by hand from the Actions tab on a branch other than main.
 on:
-  push:
-    paths: [cat_legato.py, tools/legato_samples.py, .github/workflows/legato-samples.yml]
-    branches-ignore: [main]
   workflow_dispatch:
 
 permissions:
@@ -40,4 +38,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add samples/legato
           git commit -m "Render cat legato samples [skip ci]" || exit 0
-          git push
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
