@@ -30,11 +30,11 @@ PHRASE_GAP = 0.30  # pauses longer than this (seconds) stay as sentence breaks
 
 PRESETS = {
     # Closes gaps and hums through words, voice otherwise unchanged.
-    "legato": dict(pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hum=0.5, bridge=0.04, floor=22.0),
+    "legato": dict(pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hum=0.5, bridge=0.04, floor=22.0, stretch=1.0),
     # Closer to the example: smoother, flatter melody with a mew on every syllable.
-    "meow": dict(pitch=3.0, formant=1.10, flatten=0.6, fall=3.0, hum=0.7, bridge=0.03, floor=18.0),
+    "meow": dict(pitch=3.0, formant=1.10, flatten=0.6, fall=3.0, hum=0.7, bridge=0.03, floor=18.0, stretch=1.6),
     # Small cat: higher and brighter.
-    "kitten": dict(pitch=7.0, formant=1.22, flatten=0.5, fall=4.0, hum=0.7, bridge=0.03, floor=18.0),
+    "kitten": dict(pitch=7.0, formant=1.22, flatten=0.5, fall=4.0, hum=0.7, bridge=0.03, floor=18.0, stretch=1.4),
 }
 
 
@@ -85,14 +85,15 @@ def _syllable_bounds(energy_db, start, end, min_frames):
 
 
 def legato(audio, sample_rate, pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hum=0.5,
-           bridge=0.04, floor=22.0, break_len=0.22):
+           bridge=0.04, floor=22.0, stretch=1.0, break_len=0.22):
     """Return the hummed, gap-free version of a mono float waveform (same sample rate).
 
     pitch: semitones up (negative = down). formant: envelope stretch, 1.1 = 10 % smaller vocal tract.
     flatten: 0 keeps the speaker's melody, 1 makes each phrase monotone (before the mew falls).
     fall: semitones each syllable glides down. hum: 0..1, how much consonants turn into hum.
     bridge: seconds of hum left where a short pause was. floor: dB the hum may dip below
-    the phrase's loud parts. break_len: seconds of silence kept at sentence breaks.
+    the phrase's loud parts. stretch: how much longer vowels are held (1.6 = 60 % longer).
+    break_len: seconds of silence kept at sentence breaks.
     """
     import pyworld as pw
 
@@ -179,6 +180,18 @@ def legato(audio, sample_rate, pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hu
 
     sp = _warp_formants(sp, formant)
     sp[breaks] = 1e-16
+    if abs(stretch - 1.0) > 1e-3:
+        # Hold the vowels longer, keep consonants and breaks at their own length.
+        vowel = (f0 > 0) & ~silent & ~breaks
+        weight = np.where(_smooth(vowel.astype(float), 5) > 0.5, stretch, 1.0)
+        out_pos = np.concatenate([[0.0], np.cumsum(weight)[:-1]])
+        src = np.interp(np.arange(0, out_pos[-1] + 1), out_pos, np.arange(len(weight)))
+        lo = np.floor(src).astype(int)
+        hi = np.minimum(lo + 1, len(weight) - 1)
+        frac = (src - lo)[:, None]
+        new_f0 = np.where(new_f0[lo] > 0, new_f0[lo], new_f0[hi])
+        sp = np.exp(np.log(sp[lo]) * (1 - frac) + np.log(sp[hi]) * frac)
+        ap = ap[lo] * (1 - frac) + ap[hi] * frac
     y = pw.synthesize(new_f0, np.ascontiguousarray(sp), np.ascontiguousarray(np.clip(ap, 0.001, 0.999)),
                       sample_rate, FRAME_MS)
     peak = np.max(np.abs(y)) or 1.0
@@ -203,7 +216,7 @@ def main(argv=None):
     parser.add_argument("input")
     parser.add_argument("output", help=".mp3 or .wav")
     parser.add_argument("--preset", choices=sorted(PRESETS), default="meow")
-    for name in ("pitch", "formant", "flatten", "fall", "hum", "bridge", "floor"):
+    for name in ("pitch", "formant", "flatten", "fall", "hum", "bridge", "floor", "stretch"):
         parser.add_argument(f"--{name}", type=float)
     args = parser.parse_args(argv)
 
