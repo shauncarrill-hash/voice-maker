@@ -1,0 +1,8 @@
+1_chatterbox                              4.49 s, silent inside speech 15.2 %, longest gap 450 ms
+2_chatterbox+legato                       4.05 s, silent inside speech  6.2 %, longest gap 250 ms
+3_chatterbox+meow                         6.28 s, silent inside speech  3.8 %, longest gap 240 ms
+4_chatterbox+kitten                       5.53 s, silent inside speech  4.5 %, longest gap 250 ms
+5_chatterbox+meow+purr                    6.28 s, silent inside speech  4.1 %, longest gap 260 ms
+6_chatterbox+meow+trill                   6.28 s, silent inside speech  4.0 %, longest gap 250 ms
+7_chatterbox+meow+chirp                   6.28 s, silent inside speech  3.8 %, longest gap 240 ms
+8_chatterbox+meow+purr+trill+chirp        6.28 s, silent inside speech  4.1 %, longest gap 260 ms
