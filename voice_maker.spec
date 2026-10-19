@@ -7,7 +7,7 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 datas, binaries, hiddenimports = [], [], []
 
 # Packages that load data files (model configs, watermark weights, mel filters) at runtime.
-for pkg in ["chatterbox", "perth", "s3tokenizer", "librosa", "conformer", "diffusers", "yt_dlp", "pyloudnorm", "omegaconf"]:
+for pkg in ["chatterbox", "perth", "s3tokenizer", "librosa", "conformer", "diffusers", "yt_dlp", "pyloudnorm", "omegaconf", "pyworld"]:
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
@@ -24,7 +24,7 @@ for dist in [
     except Exception:
         print(f"no metadata for {dist}")
 
-hiddenimports += ["pkg_resources", "tkinter", "chatterbox_harness"]
+hiddenimports += ["pkg_resources", "tkinter", "chatterbox_harness", "cat_legato"]
 
 ffmpeg = os.environ.get("FFMPEG_BIN")
 if ffmpeg:
