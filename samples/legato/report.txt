@@ -1,8 +1,0 @@
-1_chatterbox_default                  3.84 s, silent inside speech  5.8 %, longest gap 170 ms
-1_chatterbox_default+legato           3.57 s, silent inside speech  0.0 %, longest gap 0 ms
-1_chatterbox_default+meow             5.62 s, silent inside speech  0.0 %, longest gap 0 ms
-1_chatterbox_default+kitten           4.93 s, silent inside speech  0.0 %, longest gap 0 ms
-2_chatterbox_tuned                    3.84 s, silent inside speech  8.7 %, longest gap 300 ms
-2_chatterbox_tuned+legato             3.50 s, silent inside speech  0.0 %, longest gap 0 ms
-2_chatterbox_tuned+meow               5.54 s, silent inside speech  0.0 %, longest gap 0 ms
-2_chatterbox_tuned+kitten             4.86 s, silent inside speech  0.0 %, longest gap 0 ms

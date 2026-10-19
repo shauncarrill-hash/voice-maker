@@ -25,6 +25,11 @@ else:
     DEFAULT_OUT_DIR = os.path.join(DATA_DIR, "output")
 
 
+# "Cat legato" post-processing (cat_legato.py): hums through the gaps between words.
+LEGATO_CHOICES = ["Off", "Legato (close gaps)", "Meow", "Kitten (higher)"]
+LEGATO_PRESETS = {"Off": None, "Legato (close gaps)": "legato", "Meow": "meow", "Kitten (higher)": "kitten"}
+
+
 def parse_timestamp(text):
     """Turn '83', '83.5', '1:23' or '01:02:03.5' into seconds."""
     text = text.strip()
@@ -146,6 +151,10 @@ class App:
         ttk.Scale(opts, from_=0.0, to=1.0, variable=self.cfg_var, length=160).grid(row=0, column=4, padx=4)
         self.cfg_lbl = ttk.Label(opts, width=5)
         self.cfg_lbl.grid(row=0, column=5)
+        ttk.Label(opts, text="Cat legato").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.legato_var = tk.StringVar(value=LEGATO_CHOICES[0])
+        ttk.Combobox(opts, textvariable=self.legato_var, values=LEGATO_CHOICES, state="readonly", width=24).grid(
+            row=1, column=1, columnspan=3, sticky="w", padx=4, pady=(6, 0))
         for var, lbl in ((self.exag_var, self.exag_lbl), (self.cfg_var, self.cfg_lbl)):
             var.trace_add("write", lambda *_, v=var, l=lbl: l.config(text=f"{v.get():.2f}"))
             lbl.config(text=f"{var.get():.2f}")
@@ -290,6 +299,7 @@ class App:
         out_dir = self.out_var.get().strip() or DEFAULT_OUT_DIR
         exaggeration = self.exag_var.get()
         cfg_weight = self.cfg_var.get()
+        legato = LEGATO_PRESETS[self.legato_var.get()]
         reference = self.reference_wav
 
         def task():
@@ -303,6 +313,7 @@ class App:
                     os.path.join(out_dir, name),
                     exaggeration=exaggeration,
                     cfg_weight=cfg_weight,
+                    legato=legato,
                 )
             self.set_status(f"Done. Saved {len(phrases)} MP3 file(s) to {out_dir}")
 

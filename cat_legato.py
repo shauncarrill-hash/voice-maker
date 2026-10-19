@@ -30,11 +30,14 @@ PHRASE_GAP = 0.30  # pauses longer than this (seconds) stay as sentence breaks
 
 PRESETS = {
     # Closes gaps and hums through words, voice otherwise unchanged.
-    "legato": dict(pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hum=0.5, bridge=0.04, floor=22.0, stretch=1.0),
+    "legato": dict(pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hum=0.5, bridge=0.04, floor=22.0,
+                   stretch=1.0, slur=0.0),
     # Closer to the example: smoother, flatter melody with a mew on every syllable.
-    "meow": dict(pitch=3.0, formant=1.10, flatten=0.6, fall=3.0, hum=0.7, bridge=0.03, floor=18.0, stretch=1.6),
+    "meow": dict(pitch=3.0, formant=1.10, flatten=0.6, fall=3.0, hum=0.7, bridge=0.03, floor=18.0,
+                 stretch=1.6, slur=0.08),
     # Small cat: higher and brighter.
-    "kitten": dict(pitch=7.0, formant=1.22, flatten=0.5, fall=4.0, hum=0.7, bridge=0.03, floor=18.0, stretch=1.4),
+    "kitten": dict(pitch=7.0, formant=1.22, flatten=0.5, fall=4.0, hum=0.7, bridge=0.03, floor=18.0,
+                   stretch=1.4, slur=0.06),
 }
 
 
@@ -53,6 +56,18 @@ def _smooth(values, frames):
     pad = frames // 2
     padded = np.pad(values, pad, mode="edge")
     return np.convolve(padded, kernel, mode="same")[pad:pad + len(values)]
+
+
+def _smooth_rows(values, frames):
+    """Moving average over rows (time), applied twice for a soft triangular window."""
+    if frames <= 1 or len(values) < 2:
+        return values
+    pad = frames // 2
+    for _ in range(2):
+        padded = np.pad(values, ((pad, frames - pad), (0, 0)), mode="edge")
+        csum = np.cumsum(padded, axis=0)
+        values = (csum[frames:] - csum[:-frames]) / frames
+    return values
 
 
 def _warp_formants(sp, alpha):
@@ -85,7 +100,7 @@ def _syllable_bounds(energy_db, start, end, min_frames):
 
 
 def legato(audio, sample_rate, pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hum=0.5,
-           bridge=0.04, floor=22.0, stretch=1.0, break_len=0.22):
+           bridge=0.04, floor=22.0, stretch=1.0, slur=0.0, break_len=0.22):
     """Return the hummed, gap-free version of a mono float waveform (same sample rate).
 
     pitch: semitones up (negative = down). formant: envelope stretch, 1.1 = 10 % smaller vocal tract.
@@ -93,6 +108,7 @@ def legato(audio, sample_rate, pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hu
     fall: semitones each syllable glides down. hum: 0..1, how much consonants turn into hum.
     bridge: seconds of hum left where a short pause was. floor: dB the hum may dip below
     the phrase's loud parts. stretch: how much longer vowels are held (1.6 = 60 % longer).
+    slur: seconds over which the timbre is smoothed, so vowels change shape less (0 = off).
     break_len: seconds of silence kept at sentence breaks.
     """
     import pyworld as pw
@@ -163,6 +179,11 @@ def legato(audio, sample_rate, pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hu
         if quiet.any() and (~quiet).any():
             for b in range(log_sp.shape[1]):
                 log_sp[quiet, b] = np.interp(idx[quiet], idx[~quiet], log_sp[~quiet, b])
+        if slur > 0:
+            # Let vowels hold their shape: smooth the timbre over time but keep each frame's loudness.
+            energy = np.log(np.exp(log_sp).sum(axis=1, keepdims=True))
+            log_sp = _smooth_rows(log_sp, max(1, int(slur * fps)))
+            log_sp += energy - np.log(np.exp(log_sp).sum(axis=1, keepdims=True))
         # Keep the phrase from dropping more than `floor` dB below its loud parts.
         e = 10 * np.log10(np.exp(log_sp).sum(axis=1))
         target = np.percentile(e, 90) - floor
@@ -216,7 +237,7 @@ def main(argv=None):
     parser.add_argument("input")
     parser.add_argument("output", help=".mp3 or .wav")
     parser.add_argument("--preset", choices=sorted(PRESETS), default="meow")
-    for name in ("pitch", "formant", "flatten", "fall", "hum", "bridge", "floor", "stretch"):
+    for name in ("pitch", "formant", "flatten", "fall", "hum", "bridge", "floor", "stretch", "slur"):
         parser.add_argument(f"--{name}", type=float)
     args = parser.parse_args(argv)
 

@@ -6,6 +6,7 @@ Writes MP3s plus report.txt with gap/voicing numbers for each file.
 """
 
 import os
+import re
 import sys
 
 import numpy as np
@@ -13,16 +14,10 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cat_legato import PRESETS, legato  # noqa: E402
-from chatterbox_harness import MODEL_DIR, download_model, model_is_downloaded, save_mp3  # noqa: E402
+from chatterbox_harness import CHUNK_GAP_SECONDS, MODEL_DIR, download_model, model_is_downloaded, save_mp3  # noqa: E402
 
 TEXT = "Hello there, little one. The moon is out tonight, and the fish are sleeping in the river."
-# Commas make Chatterbox pause; without them it runs words together a little more.
-TEXT_NO_COMMAS = "Hello there little one. The moon is out tonight and the fish are sleeping in the river."
-
-TAKES = {
-    "1_chatterbox_default": dict(text=TEXT, exaggeration=0.5, cfg_weight=0.5, temperature=0.8),
-    "2_chatterbox_tuned": dict(text=TEXT_NO_COMMAS, exaggeration=0.35, cfg_weight=0.3, temperature=0.6),
-}
+SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, temperature=0.8)
 
 
 def stats(y, sr):
@@ -50,20 +45,26 @@ def main(out_dir):
         download_model()
     model = ChatterboxTTS.from_local(MODEL_DIR, "cpu")
     sr = model.sr
-    lines = []
-    for name, take in TAKES.items():
-        torch.manual_seed(1)
-        settings = dict(take)
-        text = settings.pop("text")
+    gap = np.zeros(int(sr * CHUNK_GAP_SECONDS), dtype=np.float32)
+    sentences = re.split(r"(?<=[.!?])\s+", TEXT)
+    takes = []
+    torch.manual_seed(1)
+    for sentence in sentences:
         with torch.inference_mode():
-            y = model.generate(text, **settings).squeeze().cpu().numpy().astype(np.float32)
-        variants = {name: y}
-        for preset in ("legato", "meow", "kitten"):
-            variants[f"{name}+{preset}"] = legato(y, sr, **PRESETS[preset])
-        for label, audio in variants.items():
-            save_mp3(audio, sr, os.path.join(out_dir, label + ".mp3"))
-            lines.append(f"{label:36s} {stats(audio, sr)}")
-            print(lines[-1], flush=True)
+            takes.append(model.generate(sentence, **SETTINGS).squeeze().cpu().numpy().astype(np.float32))
+
+    def join(parts):
+        return np.concatenate([p for part in parts for p in (gap, part)][1:])
+
+    # Same Chatterbox takes before and after, processed a sentence at a time like the app does.
+    variants = {"1_chatterbox": join(takes)}
+    for n, preset in enumerate(("legato", "meow", "kitten"), 2):
+        variants[f"{n}_chatterbox+{preset}"] = join([legato(t, sr, **PRESETS[preset]) for t in takes])
+    lines = []
+    for label, audio in variants.items():
+        save_mp3(audio, sr, os.path.join(out_dir, label + ".mp3"))
+        lines.append(f"{label:28s} {stats(audio, sr)}")
+        print(lines[-1], flush=True)
     with open(os.path.join(out_dir, "report.txt"), "w") as f:
         f.write("\n".join(lines) + "\n")
 

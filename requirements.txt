@@ -1,5 +1,7 @@
 chatterbox-tts==0.1.7
 yt-dlp
 numpy
+# WORLD vocoder for the "Cat legato" effect
+pyworld==0.3.5
 # perth (Chatterbox watermarker) still imports pkg_resources, removed in setuptools 81
 setuptools<81
