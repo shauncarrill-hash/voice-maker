@@ -1,0 +1,43 @@
+name: Cat legato samples
+
+# Renders before/after samples of cat_legato.py with the real Chatterbox model
+# and commits them to samples/legato on the same branch.
+on:
+  push:
+    paths: [cat_legato.py, tools/legato_samples.py, .github/workflows/legato-samples.yml]
+    branches-ignore: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  samples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packages
+        run: |
+          sudo apt-get install -y -q ffmpeg
+          python -m pip install --upgrade pip
+          pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt pyworld
+
+      - name: Render samples
+        run: |
+          python tools/legato_samples.py samples/legato | tee out.txt
+          echo "::notice title=Legato report::$(sed ':a;N;$!ba;s/\n/%0A/g' out.txt)"
+
+      - name: Commit samples
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add samples/legato
+          git commit -m "Render cat legato samples [skip ci]" || exit 0
+          git push
