@@ -1,0 +1,5 @@
+chatterbox-tts==0.1.7
+yt-dlp
+numpy
+# perth (Chatterbox watermarker) still imports pkg_resources, removed in setuptools 81
+setuptools<81

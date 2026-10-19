@@ -1,0 +1,99 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - edition: cpu
+            torch_index: https://download.pytorch.org/whl/cpu
+          - edition: nvidia
+            torch_index: https://download.pytorch.org/whl/cu124
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.6.0 torchaudio==2.6.0 --index-url ${{ matrix.torch_index }}
+          pip install -r requirements.txt pyinstaller==6.22.3
+
+      - name: Get ffmpeg
+        run: |
+          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
+          $exe = Get-ChildItem ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          "FFMPEG_BIN=$($exe.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build
+        run: pyinstaller --noconfirm voice_maker.spec
+
+      - name: Smoke test (real model, CPU)
+        if: matrix.edition == 'cpu'
+        run: |
+          $exe = "dist\VoiceMaker\VoiceMaker.exe"
+          & $env:FFMPEG_BIN -loglevel error -f lavfi -i "sine=frequency=160:duration=8" -ar 24000 -ac 1 ref.wav
+          Start-Process $exe -ArgumentList 'clip','https://www.youtube.com/watch?v=jNQXAC9IVRw','0:01','0:12','yt.wav' -Wait
+          if (Test-Path yt.wav) { Write-Host "YouTube clip download worked"; $ref = "yt.wav" } else { Write-Host "YouTube download blocked on this runner, using a test tone"; $ref = "ref.wav" }
+          $p = Start-Process $exe -ArgumentList 'say','--device','cpu','--ref',$ref,'--out','smoke.mp3','"Hello, this is a test of Voice Maker."' -Wait -PassThru
+          Get-Content "$env:LOCALAPPDATA\VoiceMaker\voice_maker.log" -Tail 40 -ErrorAction SilentlyContinue
+          if (-not (Test-Path smoke.mp3)) { throw "Smoke test produced no MP3 (exit code $($p.ExitCode))" }
+          & ($env:FFMPEG_BIN -replace 'ffmpeg.exe$','ffprobe.exe') -v error -show_entries format=duration -of csv=p=0 smoke.mp3
+
+      - name: Upload smoke test audio
+        if: matrix.edition == 'cpu'
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-audio
+          path: |
+            smoke.mp3
+            yt.wav
+          if-no-files-found: ignore
+
+      - name: Package
+        run: |
+          Copy-Item README.md dist\VoiceMaker\
+          if ("${{ matrix.edition }}" -eq "cpu") {
+            7z a -tzip -mx=5 VoiceMaker-windows-cpu.zip .\dist\VoiceMaker
+          } else {
+            # Release files are capped at 2 GB, so the big NVIDIA build is split into 1.9 GB 7-Zip parts.
+            7z a -t7z -mx=5 -v1900m VoiceMaker-windows-nvidia.7z .\dist\VoiceMaker
+          }
+          Get-ChildItem VoiceMaker-windows-*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoiceMaker-${{ matrix.edition }}
+          path: VoiceMaker-windows-*
+          compression-level: 0
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: VoiceMaker-*
+          merge-multiple: true
+      - name: Publish to the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest VoiceMaker-windows-* --title "Voice Maker (latest build)" --notes "Download the CPU edition if you are unsure. The NVIDIA edition is much faster on an NVIDIA graphics card; download every part (.001, .002, ...) into one folder and open the .001 file with 7-Zip. Extract, then run VoiceMaker\\VoiceMaker.exe. The voice model (about 3 GB) downloads the first time you generate."
