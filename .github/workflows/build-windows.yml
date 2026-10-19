@@ -109,4 +109,4 @@ jobs:
         run: |
           ls -la
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest VoiceMaker-windows-* --title "Voice Maker (latest build)" --notes "Download the CPU edition if you are unsure. The NVIDIA edition is much faster on an NVIDIA graphics card; download every part (.001, .002, ...) into one folder and open the .001 file with 7-Zip. Extract, then run VoiceMaker\\VoiceMaker.exe. The voice model (about 3 GB) downloads the first time you generate."
+          gh release create latest VoiceMaker-windows-* --target ${{ github.sha }} --title "Voice Maker (latest build)" --notes "Download the CPU edition if you are unsure. The NVIDIA edition is much faster on an NVIDIA graphics card; download every part (.001, .002, ...) into one folder and open the .001 file with 7-Zip. Extract, then run VoiceMaker\\VoiceMaker.exe. The voice model (about 3 GB) downloads the first time you generate."
