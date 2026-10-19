@@ -1,0 +1,30 @@
+name: Cat Translator (Windows build)
+
+on:
+  push:
+    paths:
+      - "cat-translator/**"
+      - ".github/workflows/cat-translator.yml"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: cat-translator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cat-translator/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx electron-builder --win --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cat-voice-translator-windows
+          path: cat-translator/release/*.exe
