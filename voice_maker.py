@@ -17,7 +17,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import voices
-from chatterbox_harness import DATA_DIR, FROZEN, VoiceCloner, ffmpeg_exe, run_ffmpeg
+from chatterbox_harness import DATA_DIR, FROZEN, VoiceCloner, ffmpeg_exe, run_ffmpeg, unused_path
 
 WORK_DIR = os.path.join(DATA_DIR, "work")
 if FROZEN:
@@ -402,7 +402,7 @@ class App:
                 os.makedirs(folder, exist_ok=True)
                 for i, phrase in enumerate(phrases, 1):
                     self.set_status(f"{voice['name']} {i}/{len(phrases)}: {phrase[:50]}")
-                    voices.speak_as(self.cloner, voice, phrase, os.path.join(folder, f"{i:02d}_{slugify(phrase)}.mp3"),
+                    voices.speak_as(self.cloner, voice, phrase, unused_path(os.path.join(folder, f"{i:02d}_{slugify(phrase)}.mp3")),
                                     end_at_words=end_at_words)
             self.set_status(f"Done. One folder per voice in {out_dir}")
 
@@ -446,7 +446,7 @@ class App:
             for i, phrase in enumerate(phrases, 1):
                 self.set_status(f"Generating {i}/{len(phrases)}: {phrase[:50]}")
                 name = f"{i:02d}_{slugify(phrase)}.mp3"
-                self.cloner.speak_to_mp3(phrase, os.path.join(out_dir, name), end_at_words=end_at_words,
+                self.cloner.speak_to_mp3(phrase, unused_path(os.path.join(out_dir, name)), end_at_words=end_at_words,
                                          **voices.speak_kwargs(settings))
             self.set_status(f"Done. Saved {len(phrases)} MP3 file(s) to {out_dir}")
 

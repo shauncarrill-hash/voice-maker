@@ -136,6 +136,15 @@ def decode_audio(path, sample_rate=24000):
     return np.frombuffer(out, dtype=np.float32)
 
 
+def unused_path(path):
+    """path, or path with _2, _3 ... added before the extension if that file already exists."""
+    stem, ext = os.path.splitext(path)
+    n = 2
+    while os.path.exists(path):
+        path, n = f"{stem}_{n}{ext}", n + 1
+    return path
+
+
 def end_at_last_word(audio, sample_rate, text="", pause_seconds=0.6, below_loud_db=22.0, fade_seconds=0.05):
     """Cut Chatterbox's trailing babble: everything after a long pause once the text has had time
     to be said, and the quiet end.

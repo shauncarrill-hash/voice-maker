@@ -19,7 +19,7 @@ import re
 import shutil
 import tempfile
 
-from chatterbox_harness import DATA_DIR, keep_loudest_parts, run_ffmpeg
+from chatterbox_harness import DATA_DIR, keep_loudest_parts, run_ffmpeg, unused_path
 
 VOICES_DIR = os.path.join(DATA_DIR, "voices")
 
@@ -132,7 +132,7 @@ def render_all(cloner, text, out_dir, voices=None, log=print):
     paths = []
     for voice in voices:
         log(f"Speaking as {voice['name']}…")
-        paths.append(speak_as(cloner, voice, text, os.path.join(out_dir, slugify(voice["name"]) + ".mp3")))
+        paths.append(speak_as(cloner, voice, text, unused_path(os.path.join(out_dir, slugify(voice["name"]) + ".mp3"))))
     return paths
 
 
