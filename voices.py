@@ -173,6 +173,7 @@ def main(argv, download=None):
     pack.add_argument("--pitches", nargs="+", type=int, default=[-8, -4, 0, 4, 8], help="semitones (default: -8 -4 0 4 8)")
     pack.add_argument("--voices", nargs="+", metavar="NAME", help="only these voices (default: all)")
     pack.add_argument("--format", choices=["ogg", "mp3", "wav"], default="ogg")
+    pack.add_argument("--speakers", help="CSV of speaker_id,group,voice,pitch: record each speaker's lines in its voice")
     pack.add_argument("--force", action="store_true", help="render everything again, even lines already done")
     compare = sub.add_parser("compare", help="say one line in every saved voice")
     compare.add_argument("text")
@@ -187,7 +188,8 @@ def main(argv, download=None):
 
         chosen = [get_voice(n) for n in args.voices] if args.voices else None
         path = voice_pack.make_pack(VoiceCloner(device=args.device), voice_pack.read_lines(args.lines), args.out_dir,
-                                    chosen, args.pitches, args.format, args.force)
+                                    chosen, args.pitches, args.format, args.force,
+                                    speakers=voice_pack.read_speakers(args.speakers) if args.speakers else None)
         print(f"Saved {path}")
     elif args.cmd == "compare":
         chosen = [get_voice(n) for n in args.voices] if args.voices else None

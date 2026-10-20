@@ -503,18 +503,31 @@ class App:
         except ValueError:
             messagebox.showwarning("Voice Maker", "Pitches must be whole numbers, like -8 -4 0 4 8.")
             return
+        speakers = None
+        if messagebox.askyesno("Voice Maker", "Use a speaker table, so each character's lines are recorded "
+                                              "only in its own voice?"):
+            speakers_path = filedialog.askopenfilename(title="Choose the speaker table (speakers.csv)",
+                                                       filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
+            if not speakers_path:
+                return
+            try:
+                speakers = voice_pack.read_speakers(speakers_path)
+            except (OSError, ValueError) as exc:
+                messagebox.showwarning("Voice Maker", str(exc))
+                return
         out_dir = filedialog.askdirectory(title="Folder for the voice pack", initialdir=self.out_var.get())
         if not out_dir:
             return
         saved = voices.list_voices()
         if not messagebox.askokcancel("Voice Maker", (
-                f"{len(lines)} lines × {len(saved)} voices × {len(pitches)} pitches. Each line is spoken once per "
-                f"voice, so that is {len(lines) * len(saved)} takes, which can take hours. Lines already in the "
+                f"{len(lines)} lines, {len(saved)} voices, {len(pitches)} pitches. Each line is spoken once per "
+                f"voice that needs it, at most {len(lines) * len(saved)} takes, which can take hours. Lines already in the "
                 "folder are skipped. Start?")):
             return
 
         def task():
-            path = voice_pack.make_pack(self.cloner, lines, out_dir, saved, pitches, log=self.set_status)
+            path = voice_pack.make_pack(self.cloner, lines, out_dir, saved, pitches, log=self.set_status,
+                                        speakers=speakers)
             self.set_status(f"Done. Voice pack and manifest in {os.path.dirname(path)}")
 
         self.run_in_background(task)

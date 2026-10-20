@@ -18,6 +18,10 @@ settings), so it can be stopped and restarted.
 Command line (through voice_maker.py or VoiceMaker.exe):
     pack lines.csv --out-dir voice_pack
     pack lines.csv --out-dir voice_pack --pitches -8 -4 0 4 8 --voices "Long Johnson" Tabby --format ogg
+    pack lines.csv --speakers speakers.csv --out-dir voice_pack
+
+With a speaker table (see read_speakers), a character with its own voice only gets its lines
+recorded in that voice, and shared lines (pirates, shopkeepers) in every voice they might get.
 """
 
 import csv
@@ -37,25 +41,34 @@ SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def read_lines(path):
-    """Return [(id, text)] from a CSV (id,text) or a plain text file (one line per row)."""
+    """Return [(id, text, speaker)] from a CSV or a plain text file (one line per row).
+
+    A CSV with a header row uses its "id", "text" and optional "speaker" columns (others are
+    ignored); without a header the first column is the id and the rest is the text.
+    speaker is None when the file doesn't say.
+    """
     with open(path, encoding="utf-8-sig", newline="") as f:
         content = f.read()
     rows = []
     if path.lower().endswith(".csv"):
-        for row in csv.reader(content.splitlines()):
-            if len(row) < 2 or not row[0].strip() or row[0].startswith("#"):
-                continue
-            if not rows and [c.strip().lower() for c in row[:2]] == ["id", "text"]:
-                continue  # header
-            rows.append((row[0].strip(), ",".join(row[1:]).strip()))
+        table = [r for r in csv.reader(content.splitlines()) if r and r[0].strip() and not r[0].startswith("#")]
+        header = [c.strip().lower() for c in table[0]] if table else []
+        if "id" in header and "text" in header:
+            col = {name: header.index(name) for name in ("id", "text", "speaker") if name in header}
+            for r in table[1:]:
+                r = r + [""] * (len(header) - len(r))
+                speaker = r[col["speaker"]].strip() if "speaker" in col else ""
+                rows.append((r[col["id"]].strip(), r[col["text"]].strip(), speaker or None))
+        else:
+            rows = [(r[0].strip(), ",".join(r[1:]).strip(), None) for r in table if len(r) >= 2]
     else:
         for line in content.splitlines():
             text = line.strip()
             if text and not text.startswith("#"):
                 slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:40] or "line"
-                rows.append((f"{slug}_{zlib.crc32(text.encode()):08x}"[:52], text))
+                rows.append((f"{slug}_{zlib.crc32(text.encode()):08x}"[:52], text, None))
     seen = set()
-    for line_id, text in rows:
+    for line_id, text, _ in rows:
         if not SAFE_ID.match(line_id):
             raise ValueError(f"Line id {line_id!r} can only use letters, digits, _ . and -")
         if line_id in seen:
@@ -64,6 +77,32 @@ def read_lines(path):
             raise ValueError(f"Line {line_id!r} has no text")
         seen.add(line_id)
     return rows
+
+
+def read_speakers(path):
+    """Speaker table: CSV with speaker_id, voice and optional group and pitch columns.
+
+    A line whose speaker has a voice is recorded only in that voice (at its pitch, or every pitch
+    if pitch is empty). A group (e.g. "pirates") is recorded in the voices of every speaker whose
+    group it is. Voice "*", or no voice anywhere for that speaker or group, means every voice,
+    for characters the game gives a voice when they first speak. Returns {line speaker: [(voice, pitch)]},
+    with None for "every voice" and pitch None for "every pitch".
+    """
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = [{k.strip().lower(): (v or "").strip() for k, v in r.items() if k} for r in csv.DictReader(f)]
+    targets = {}
+    for r in rows:
+        sid, voice, group = r.get("speaker_id", ""), r.get("voice", ""), r.get("group", "")
+        if not sid:
+            continue
+        pitch = int(r["pitch"]) if r.get("pitch", "").lstrip("+-").isdigit() else None
+        for key in filter(None, (sid, group)):
+            targets.setdefault(key, [])
+            if voice == "*" and key == sid:
+                targets[key] = None  # every voice, whatever its members say
+            elif voice not in ("", "*") and targets[key] is not None:
+                targets[key].append((library.slugify(voice), pitch))
+    return {k: (v or None) for k, v in targets.items()}
 
 
 def pitch_folder(pitch):
@@ -81,14 +120,33 @@ def _take_hash(text, voice, seed):
     return hashlib.sha1(blob.encode()).hexdigest()[:12]
 
 
-def make_pack(cloner, lines, out_dir, voices=None, pitches=DEFAULT_PITCHES, fmt="ogg", force=False, log=print):
-    """Render lines ([(id, text)]) in every voice and pitch; returns the manifest path."""
+def make_pack(cloner, lines, out_dir, voices=None, pitches=DEFAULT_PITCHES, fmt="ogg", force=False, log=print,
+              speakers=None):
+    """Render lines ([(id, text)] or [(id, text, speaker)]) in every voice and pitch, or only in each
+    speaker's voice when speakers (from read_speakers) says so; returns the manifest path."""
     voices = voices if voices is not None else library.list_voices()
     if not voices:
         raise RuntimeError("No saved voices yet. Save some voices first.")
     if fmt not in FORMATS:
         raise ValueError(f"Format must be one of {', '.join(FORMATS)}")
     pitches = sorted({int(p) for p in pitches})
+    lines = [(t[0], t[1], t[2] if len(t) > 2 else None) for t in lines]
+    speakers = speakers or {}
+    known = {library.slugify(v["name"]) for v in voices}
+    missing = sorted({slug for t in speakers.values() if t for slug, _ in t} - known)
+    if missing:
+        raise ValueError(f"The speaker table names voices that aren't saved (or weren't picked): {', '.join(missing)}")
+
+    def wanted(speaker, voice_slug):
+        """The pitches this voice records for a line said by speaker."""
+        targets = speakers.get(speaker) if speaker else None
+        if targets is None:
+            return pitches
+        chosen = set()
+        for slug, p in targets:
+            if slug == voice_slug:
+                chosen.update(pitches if p is None else [p])
+        return sorted(chosen)
     os.makedirs(out_dir, exist_ok=True)
     manifest_path = os.path.join(out_dir, "manifest.json")
     old = {}
@@ -96,9 +154,10 @@ def make_pack(cloner, lines, out_dir, voices=None, pitches=DEFAULT_PITCHES, fmt=
         with open(manifest_path, encoding="utf-8") as f:
             old = json.load(f).get("lines", {})
 
-    manifest = {"format": fmt, "pitches": pitches, "voices": [], "lines": {}}
-    for line_id, text in lines:
-        manifest["lines"][line_id] = {"text": text, "files": {}}
+    manifest = {"format": fmt, "pitches": pitches, "voices": [], "lines": {},
+                "speakers": {k: ([{"voice": v, "pitch": p} for v, p in t] if t else "any") for k, t in speakers.items()}}
+    for line_id, text, speaker in lines:
+        manifest["lines"][line_id] = {"text": text, "speaker": speaker, "files": {}}
     for voice in voices:
         slug = library.slugify(voice["name"])
         manifest["voices"].append({
@@ -113,16 +172,20 @@ def make_pack(cloner, lines, out_dir, voices=None, pitches=DEFAULT_PITCHES, fmt=
             json.dump(manifest, f, indent=2, ensure_ascii=False)
         os.replace(tmp, manifest_path)
 
-    total, done, rendered, spent = len(voices) * len(lines), 0, 0, 0.0
+    total, done, rendered, spent = sum(1 for v in voices for _, _, sp in lines
+                                       if wanted(sp, library.slugify(v["name"]))), 0, 0, 0.0
     for voice in voices:
         slug, seed = library.slugify(voice["name"]), voice_seed(voice)
         base_pitch = voice["settings"]["pitch"]
         reference_set = False
-        for line_id, text in lines:
+        for line_id, text, speaker in lines:
+            line_pitches = wanted(speaker, slug)
+            if not line_pitches:
+                continue
             done += 1
             take = _take_hash(text, voice, seed)
             entries = {}
-            for p in pitches:
+            for p in line_pitches:
                 rel = f"{slug}/{pitch_folder(p)}/{line_id}.{fmt}"
                 entries[f"{slug}_{pitch_folder(p)}"] = {"path": rel, "pitch": p, "take": take}
             previous = old.get(line_id, {}).get("files", {})
@@ -139,8 +202,8 @@ def make_pack(cloner, lines, out_dir, voices=None, pitches=DEFAULT_PITCHES, fmt=
             kwargs = library.speak_kwargs(voice["settings"])
             kwargs.pop("pitch")
             kwargs["seed"] = seed
-            takes = cloner.speak_variants(text, [base_pitch + p for p in pitches], **kwargs)
-            for (k, e), p in zip(entries.items(), pitches):
+            takes = cloner.speak_variants(text, [base_pitch + p for p in line_pitches], **kwargs)
+            for (k, e), p in zip(entries.items(), line_pitches):
                 wav = takes[base_pitch + p]
                 save_audio(wav, cloner.sample_rate, os.path.join(out_dir, e["path"]))
                 e["seconds"] = round(len(wav) / cloner.sample_rate, 2)

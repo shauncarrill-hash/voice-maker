@@ -84,6 +84,8 @@ The id is what the game looks up, so keep it when you change the wording. (A pla
 .venv/bin/python voice_maker.py pack lines.csv --out-dir voice_pack --pitches -8 -4 0 4 8 --voices "Long Johnson" Tabby
 ```
 
+**Speakers:** give the lines CSV a `speaker` column and pass a speaker table (`--speakers speakers.csv`, or say yes when the app asks) to record each character only in its own voice. The table has `speaker_id,name,group,gender,voice,pitch` columns. A speaker with a voice (and optionally a pitch) gets its lines only in that voice and pitch. A shared speaker such as `pirates` is recorded in the voices of every speaker whose `group` it is. A speaker with voice `*`, or with no voice anywhere, is recorded in every voice and pitch, for characters the game gives a voice when they first speak (station masters). The manifest lists each line's speaker.
+
 Each take is about 10 to 20 seconds on a mid-range NVIDIA card, so 300 lines in 7 voices is an overnight run. Close the Voice Maker window first if you run it from the command line: two copies of the model don't fit on an 8 GB card.
 
 ## Command line
