@@ -137,6 +137,22 @@ def decode_audio(path, sample_rate=24000):
     return np.frombuffer(out, dtype=np.float32)
 
 
+# Clean-up pass for downloaded clips: repair clipped peaks, remove clicks, cut rumble and codec hiss,
+# denoise, trim silence at both ends (not in the middle), and even out loudness without re-clipping.
+CLEAN_FILTER = (
+    "adeclip,adeclick,highpass=f=80,lowpass=f=11000,afftdn=nf=-25,"
+    "silenceremove=start_periods=1:start_threshold=-45dB,areverse,"
+    "silenceremove=start_periods=1:start_threshold=-45dB,areverse,"
+    "loudnorm=I=-18:TP=-2"
+)
+
+
+def clean_clip(src, dst):
+    """Save a cleaned-up, mono 24 kHz copy of src at dst (see CLEAN_FILTER)."""
+    run_ffmpeg(["-i", src, "-af", CLEAN_FILTER, "-ac", "1", "-ar", "24000", dst])
+    return dst
+
+
 def unused_path(path):
     """path, or path with _2, _3 ... added before the extension if that file already exists."""
     stem, ext = os.path.splitext(path)

@@ -61,6 +61,8 @@ With an NVIDIA GPU each phrase takes a few seconds. On CPU it works but expect t
 
 **Stop at the last word** (on by default): Chatterbox sometimes keeps going after the text is done, pausing and then murmuring an echo of the last word. With this ticked, each line ends at its last word with a short fade. A long pause only counts as the end once the line has had time to be said, so pauses in the middle (such as "...") are kept. Untick it, or add `--keep-tail` on the command line, to keep everything.
 
+**Clean up clip** (on by default): every downloaded clip gets a clean-up pass that repairs clipped, crunchy peaks, removes clicks and pops, cuts low rumble and high codec hiss, reduces background noise, trims silence at the ends and evens out the loudness. The untouched download is kept next to it as `reference_raw.wav`. Untick it to use the clip as downloaded; on the command line add `--raw` to `clip` or `voice add`.
+
 **Saved voices:** once a reference clip sounds right, click *Save clip as a voice…* and give it a name. The clip is cleaned up (rumble and hiss removed, silence trimmed, loudness evened out) and stored with the current settings in a `voices` folder on your computer (next to the models: `%LOCALAPPDATA%\VoiceMaker\voices` for the .exe), never in the repo. Pick a voice from *Saved voice* to make it the reference and bring its settings back; *Remember these settings* updates them. *Generate with every saved voice* speaks your phrases in each voice, one folder per voice, so you can compare them.
 
 ## Command line

@@ -18,7 +18,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import voices
-from chatterbox_harness import DATA_DIR, FROZEN, VoiceCloner, ffmpeg_exe, run_ffmpeg, unused_path
+from chatterbox_harness import DATA_DIR, FROZEN, VoiceCloner, clean_clip, ffmpeg_exe, run_ffmpeg, unused_path
 
 WORK_DIR = os.path.join(DATA_DIR, "work")
 if FROZEN:
@@ -57,8 +57,12 @@ def slugify(text, max_len=40):
     return slug[:max_len] or "phrase"
 
 
-def download_clip(url, start, end, out_wav):
-    """Download only [start, end] of the video's audio and save it as mono 24 kHz WAV."""
+def download_clip(url, start, end, out_wav, clean=True):
+    """Download only [start, end] of the video's audio and save it as mono 24 kHz WAV.
+
+    clean: run the clean-up pass (declip, declick, denoise, even loudness); the untouched
+    download is kept next to it as <name>_raw.wav.
+    """
     import yt_dlp
     from yt_dlp.utils import download_range_func
 
@@ -98,12 +102,15 @@ def download_clip(url, start, end, out_wav):
         files = os.listdir(tmp_dir)
         if not files:
             raise RuntimeError("The download finished but no audio file was saved.")
+        raw_wav = os.path.splitext(out_wav)[0] + "_raw.wav" if clean else out_wav
         run_ffmpeg([
             "-i", os.path.join(tmp_dir, files[0]),
             "-t", str(end - start),
             "-ac", "1", "-ar", "24000",
-            out_wav,
+            raw_wav,
         ])
+        if clean:
+            clean_clip(raw_wav, out_wav)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -137,6 +144,10 @@ class App:
         ttk.Button(step1, text="Use a local audio file instead…", command=self.on_pick_local).grid(row=2, column=1, columnspan=2, sticky="w", **pad)
         self.ref_label = ttk.Label(step1, text="No reference clip yet. 10 to 20 seconds of clean speech works best.")
         self.ref_label.grid(row=3, column=0, columnspan=4, sticky="w", **pad)
+        self.clean_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(step1, text="Clean up clip (repair distortion, remove clicks and noise)",
+                        variable=self.clean_var).grid(row=6, column=0, columnspan=4, sticky="w", **pad)
+        self.reference_cleaned = False
         self.cat_clip_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             step1, text="Cat clip: use only the yowls, with Meow, all cat sounds and a Medium accent",
@@ -301,11 +312,14 @@ class App:
             messagebox.showwarning("Voice Maker", "End time must be after the start time.")
             return
 
+        clean = self.clean_var.get()
+
         def task():
             self.set_status("Downloading audio section…")
             out_wav = os.path.join(WORK_DIR, "reference.wav")
-            download_clip(url, start, end, out_wav)
+            download_clip(url, start, end, out_wav, clean=clean)
             self.reference_wav = out_wav
+            self.reference_cleaned = clean
             length = end - start
             note = " (only about the first 10 s are used by Chatterbox)" if length > 20 else ""
             self.events.put(("ref", f"Reference clip ready: {length:.1f} s{note}  →  {out_wav}"))
@@ -335,6 +349,7 @@ class App:
         )
         if path:
             self.reference_wav = path
+            self.reference_cleaned = False
             self.voice_var.set("")
             self.ref_label.config(text=f"Reference clip: {path}")
 
@@ -366,6 +381,7 @@ class App:
         voice = voices.get_voice(self.voice_var.get())
         s = voice["settings"]
         self.reference_wav = voice["reference"]
+        self.reference_cleaned = True
         self.cat_clip_var.set(False)  # its reference was already cut down when it was saved
         self.exag_var.set(s["exaggeration"])
         self.cfg_var.set(s["cfg_weight"])
@@ -389,12 +405,13 @@ class App:
         clip, cat_clip, settings = self.reference_wav, self.cat_clip_var.get(), self.current_settings()
         if settings is None:
             return
+        clean = self.clean_var.get() and not self.reference_cleaned  # don't clean a clip twice
         url = self.url_var.get().strip()
         source = f"{url} {self.start_var.get()}-{self.end_var.get()}" if clip == os.path.join(WORK_DIR, "reference.wav") and url else None
 
         def task():
             self.set_status(f"Saving voice {name}…")
-            voices.save_voice(name, clip, cat_clip, source, **settings)
+            voices.save_voice(name, clip, cat_clip, source, clean=clean, **settings)
             self.events.put(("voices", name))
             self.set_status(f"Saved voice {name}. Pick it any time under Saved voice.")
 
@@ -494,13 +511,15 @@ def run_command_line(args):
 
     try:
         if args[0] == "clip":
-            _, url, start, end, out_wav = args
-            download_clip(url, parse_timestamp(start), parse_timestamp(end), os.path.abspath(out_wav))
+            _, url, start, end, out_wav = [a for a in args if a != "--raw"]
+            download_clip(url, parse_timestamp(start), parse_timestamp(end), os.path.abspath(out_wav),
+                          clean="--raw" not in args)
             print(f"Saved {out_wav}")
             return 0
         if args[0] in ("voice", "compare"):
+            # save_voice does the clean-up pass itself.
             return voices.main(args, download=lambda url, start, end, out: download_clip(
-                url, parse_timestamp(start), parse_timestamp(end), out))
+                url, parse_timestamp(start), parse_timestamp(end), out, clean=False))
         return chatterbox_harness.main(args)
     except SystemExit as exc:  # --help, or an argument error already printed by argparse
         return exc.code or 0

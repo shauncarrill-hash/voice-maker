@@ -20,7 +20,7 @@ import re
 import shutil
 import tempfile
 
-from chatterbox_harness import DATA_DIR, keep_loudest_parts, run_ffmpeg, unused_path
+from chatterbox_harness import DATA_DIR, clean_clip, keep_loudest_parts, run_ffmpeg, unused_path
 
 VOICES_DIR = os.path.join(DATA_DIR, "voices")
 
@@ -29,32 +29,22 @@ DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, pitch=0.0, seed=None, 
 # What worked best with a cat's voice: yowls only, Meow, all three cat sounds, Medium accent.
 CAT_CLIP_SETTINGS = dict(legato="meow", accent="medium", purr=0.8, trill=0.3, chirp=0.25)
 
-# Denoise, drop rumble, trim silence at both ends (not in the middle), even out loudness.
-CLEAN_FILTER = (
-    "highpass=f=80,afftdn=nf=-25,"
-    "silenceremove=start_periods=1:start_threshold=-45dB,areverse,"
-    "silenceremove=start_periods=1:start_threshold=-45dB,areverse,"
-    "loudnorm=I=-18:TP=-2"
-)
-
-
 def slugify(name):
     return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").lower() or "voice"
 
 
-def clean_clip(src, dst):
-    run_ffmpeg(["-i", src, "-af", CLEAN_FILTER, "-ac", "1", "-ar", "24000", dst])
-    return dst
-
-
-def save_voice(name, clip_path, cat_clip=False, source=None, **settings):
-    """Clean clip_path and store it as a named voice. Returns the voice."""
+def save_voice(name, clip_path, cat_clip=False, source=None, clean=True, **settings):
+    """Store clip_path as a named voice, cleaned up first unless clean=False (already done). Returns the voice."""
     folder = os.path.join(VOICES_DIR, slugify(name))
     os.makedirs(folder, exist_ok=True)
     reference = os.path.join(folder, "reference.wav")
     tmp = tempfile.mkdtemp(dir=folder)
     try:
-        cleaned = clean_clip(clip_path, os.path.join(tmp, "clean.wav"))
+        cleaned = os.path.join(tmp, "clean.wav")
+        if clean:
+            clean_clip(clip_path, cleaned)
+        else:
+            run_ffmpeg(["-i", clip_path, "-ac", "1", "-ar", "24000", cleaned])
         if cat_clip:
             keep_loudest_parts(cleaned, reference)
         else:
@@ -156,6 +146,7 @@ def main(argv, download=None):
     src.add_argument("--file", help="local audio file")
     src.add_argument("--youtube", nargs=3, metavar=("URL", "START", "END"), help="YouTube link and start/end times")
     add.add_argument("--cat-clip", action="store_true", help="keep only the yowls and use the cat settings")
+    add.add_argument("--raw", action="store_true", help="skip the clean-up pass (declip, denoise, even loudness)")
     for key, value in DEFAULT_SETTINGS.items():
         flag = "--" + key.replace("_", "-")
         if key in ("legato", "accent"):
@@ -195,10 +186,10 @@ def main(argv, download=None):
             try:
                 clip = os.path.join(tmp, "clip.wav")
                 download(url, start, end, clip)
-                v = save_voice(args.name, clip, args.cat_clip, f"{url} {start}-{end}", **settings)
+                v = save_voice(args.name, clip, args.cat_clip, f"{url} {start}-{end}", clean=not args.raw, **settings)
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
         else:
-            v = save_voice(args.name, args.file, args.cat_clip, **settings)
+            v = save_voice(args.name, args.file, args.cat_clip, clean=not args.raw, **settings)
         print(f"Saved voice {v['name']} -> {v['reference']}")
     return 0
