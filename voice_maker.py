@@ -28,6 +28,8 @@ else:
 # "Cat legato" post-processing (cat_legato.py): hums through the gaps between words.
 LEGATO_CHOICES = ["Off", "Legato (close gaps)", "Meow", "Kitten (higher)"]
 LEGATO_PRESETS = {"Off": None, "Legato (close gaps)": "legato", "Meow": "meow", "Kitten (higher)": "kitten"}
+# "Cat accent" respelling (cat_accent.py) strengths.
+ACCENT_CHOICES = ["Off", "Light", "Medium", "Strong"]
 # Extra cat sounds (checkboxes) and how strongly each is applied.
 CAT_SOUNDS = [("purr", "Purr at sentence ends", 0.8), ("trill", "Trills (brrp)", 0.3), ("chirp", "Chirps", 0.25)]
 
@@ -163,8 +165,10 @@ class App:
         for key, label, _ in CAT_SOUNDS:
             self.sound_vars[key] = tk.BooleanVar(value=False)
             ttk.Checkbutton(sounds, text=label, variable=self.sound_vars[key]).pack(side="left", padx=(0, 12))
-        self.accent_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(sounds, text="Cat accent (moon → nooon)", variable=self.accent_var).pack(side="left")
+        ttk.Label(sounds, text="Cat accent").pack(side="left", padx=(0, 4))
+        self.accent_var = tk.StringVar(value=ACCENT_CHOICES[0])
+        ttk.Combobox(sounds, textvariable=self.accent_var, values=ACCENT_CHOICES, state="readonly", width=10).pack(
+            side="left")
         for var, lbl in ((self.exag_var, self.exag_lbl), (self.cfg_var, self.cfg_lbl)):
             var.trace_add("write", lambda *_, v=var, l=lbl: l.config(text=f"{v.get():.2f}"))
             lbl.config(text=f"{var.get():.2f}")
@@ -310,7 +314,7 @@ class App:
         exaggeration = self.exag_var.get()
         cfg_weight = self.cfg_var.get()
         legato = LEGATO_PRESETS[self.legato_var.get()]
-        accent = self.accent_var.get()
+        accent = None if self.accent_var.get() == "Off" else self.accent_var.get().lower()
         cat_sounds = {key: amount if self.sound_vars[key].get() else 0.0 for key, _, amount in CAT_SOUNDS}
         reference = self.reference_wav
 

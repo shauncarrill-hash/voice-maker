@@ -160,17 +160,18 @@ class VoiceCloner:
             self._reference = key
 
     def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None, cat_sounds=None,
-              accent=False):
+              accent=None):
         """Return a mono float32 waveform at self.sample_rate for text.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
         cat_sounds: optional {"purr": 0..1, "trill": 0..1, "chirp": 0..1} added on top of the preset.
-        accent: respell the text with cat_accent first ("moon" -> "nooon", "river" -> "rizer").
+        accent: None, or a cat_accent strength ("light", "medium", "strong") to respell the text with first
+        ("river" -> "rriwerr").
         """
         if accent:
             from cat_accent import cat_accent
 
-            text = cat_accent(text)
+            text = cat_accent(text, accent)
             self.log(f"Cat accent: {text}")
         if cat_sounds and any(cat_sounds.values()) and not legato:
             legato = "legato"
@@ -225,7 +226,8 @@ def main(argv=None):
     say.add_argument("--exaggeration", type=float, default=0.5)
     say.add_argument("--cfg-weight", type=float, default=0.5)
     say.add_argument("--legato", choices=["legato", "meow", "kitten"], help="hum through word gaps (cat voice)")
-    say.add_argument("--cat-accent", action="store_true", help="respell the text the way a cat would say it")
+    say.add_argument("--cat-accent", nargs="?", const="medium", choices=["light", "medium", "strong"],
+                     help="respell the text the way a cat would say it (default strength: medium)")
     for sound in ("purr", "trill", "chirp"):
         say.add_argument(f"--{sound}", type=float, default=0.0, help=f"0..1 amount of cat {sound}s (implies --legato)")
     args = parser.parse_args(argv)
