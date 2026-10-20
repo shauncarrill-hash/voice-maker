@@ -114,10 +114,10 @@ def speak_kwargs(settings):
     )
 
 
-def speak_as(cloner, voice, text, mp3_path):
-    """Speak text in a saved voice with its remembered settings."""
+def speak_as(cloner, voice, text, mp3_path, **extra):
+    """Speak text in a saved voice with its remembered settings (extra: more speak() arguments)."""
     cloner.set_reference(voice["reference"], exaggeration=voice["settings"]["exaggeration"])
-    return cloner.speak_to_mp3(text, mp3_path, **speak_kwargs(voice["settings"]))
+    return cloner.speak_to_mp3(text, mp3_path, **speak_kwargs(voice["settings"]), **extra)
 
 
 def render_all(cloner, text, out_dir, voices=None, log=print):

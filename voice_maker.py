@@ -186,6 +186,9 @@ class App:
         self.accent_var = tk.StringVar(value=ACCENT_CHOICES[0])
         ttk.Combobox(sounds, textvariable=self.accent_var, values=ACCENT_CHOICES, state="readonly", width=10).pack(
             side="left")
+        self.stop_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opts, text="Stop at the last word (cut trailing babble)", variable=self.stop_var).grid(
+            row=1, column=4, columnspan=2, sticky="w", pady=(6, 0))
         for var, lbl in ((self.exag_var, self.exag_lbl), (self.cfg_var, self.cfg_lbl)):
             var.trace_add("write", lambda *_, v=var, l=lbl: l.config(text=f"{v.get():.2f}"))
             lbl.config(text=f"{var.get():.2f}")
@@ -386,6 +389,7 @@ class App:
             messagebox.showwarning("Voice Maker", "Type at least one phrase.")
             return
         out_dir = self.out_var.get().strip() or DEFAULT_OUT_DIR
+        end_at_words = self.stop_var.get()
 
         def task():
             for voice in saved:
@@ -393,7 +397,8 @@ class App:
                 os.makedirs(folder, exist_ok=True)
                 for i, phrase in enumerate(phrases, 1):
                     self.set_status(f"{voice['name']} {i}/{len(phrases)}: {phrase[:50]}")
-                    voices.speak_as(self.cloner, voice, phrase, os.path.join(folder, f"{i:02d}_{slugify(phrase)}.mp3"))
+                    voices.speak_as(self.cloner, voice, phrase, os.path.join(folder, f"{i:02d}_{slugify(phrase)}.mp3"),
+                                    end_at_words=end_at_words)
             self.set_status(f"Done. One folder per voice in {out_dir}")
 
         self.run_in_background(task)
@@ -427,6 +432,7 @@ class App:
         out_dir = self.out_var.get().strip() or DEFAULT_OUT_DIR
         settings = self.current_settings()
         reference = self.reference_wav
+        end_at_words = self.stop_var.get()
         loud_parts_only = self.cat_clip_var.get()
 
         def task():
@@ -435,7 +441,8 @@ class App:
             for i, phrase in enumerate(phrases, 1):
                 self.set_status(f"Generating {i}/{len(phrases)}: {phrase[:50]}")
                 name = f"{i:02d}_{slugify(phrase)}.mp3"
-                self.cloner.speak_to_mp3(phrase, os.path.join(out_dir, name), **voices.speak_kwargs(settings))
+                self.cloner.speak_to_mp3(phrase, os.path.join(out_dir, name), end_at_words=end_at_words,
+                                         **voices.speak_kwargs(settings))
             self.set_status(f"Done. Saved {len(phrases)} MP3 file(s) to {out_dir}")
 
         self.run_in_background(task)

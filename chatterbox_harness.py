@@ -136,6 +136,41 @@ def decode_audio(path, sample_rate=24000):
     return np.frombuffer(out, dtype=np.float32)
 
 
+def end_at_last_word(audio, sample_rate, text="", pause_seconds=0.6, below_loud_db=22.0, fade_seconds=0.05):
+    """Cut Chatterbox's trailing babble: everything after a long pause once the text has had time
+    to be said, and the quiet end.
+
+    Chatterbox sometimes keeps going after the text is done, with a pause and then a murmured
+    echo of the last word. A long pause only counts as the end once the speech before it is at
+    least as long as text would take even at a fast pace (~14 characters a second), so a pause
+    at "..." in the middle of the text is kept.
+    """
+    min_speech = 0.07 * len(text.strip())
+    hop = sample_rate // 50  # 20 ms
+    frames = len(audio) // hop
+    if frames < 10:
+        return audio
+    rms = np.sqrt(np.mean(audio[: frames * hop].reshape(frames, hop) ** 2, axis=1) + 1e-12)
+    db = np.convolve(20 * np.log10(rms), np.ones(5) / 5, mode="same")
+    voiced = db > np.percentile(db, 95) - below_loud_db
+    if not voiced.any():
+        return audio
+    first = int(np.argmax(voiced))
+    end, quiet = frames, 0
+    for i in range(first, frames):
+        if voiced[i]:
+            end, quiet = i + 1, 0
+        else:
+            quiet += 1
+            if quiet * hop >= pause_seconds * sample_rate and end * hop >= min_speech * sample_rate:
+                break
+    end = min(len(audio), (end + 2) * hop)  # keep 40 ms of release
+    out = audio[:end].copy()
+    fade = min(len(out), int(fade_seconds * sample_rate))
+    out[len(out) - fade:] *= np.linspace(1.0, 0.0, fade, dtype=out.dtype)
+    return out
+
+
 def keep_loudest_parts(wav_path, out_path, max_seconds=5.0, below_peak_db=15.0, gap_seconds=0.15,
                        sample_rate=24000):
     """Save only the loud stretches of a clip, joined by short gaps (at most max_seconds).
@@ -230,13 +265,14 @@ class VoiceCloner:
             self._reference = key
 
     def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None, cat_sounds=None,
-              accent=None):
+              accent=None, end_at_words=True):
         """Return a mono float32 waveform at self.sample_rate for text.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
         cat_sounds: optional {"purr": 0..1, "trill": 0..1, "chirp": 0..1} added on top of the preset.
         accent: None, or a cat_accent strength ("light", "medium", "strong") to respell the text with first
         ("river" -> "rriwerr").
+        end_at_words: stop at the last spoken word, cutting any trailing babble or echo.
         """
         if accent:
             from cat_accent import cat_accent
@@ -269,6 +305,11 @@ class VoiceCloner:
                     temperature=temperature,
                 )
             wav = wav.squeeze().cpu().numpy().astype(np.float32)
+            if end_at_words:
+                trimmed = end_at_last_word(wav, self.sample_rate, chunk)
+                if len(wav) - len(trimmed) > self.sample_rate // 2:
+                    self.log(f"Cut {(len(wav) - len(trimmed)) / self.sample_rate:.1f} s of trailing babble")
+                wav = trimmed
             if legato:
                 self.log("Applying cat legato…")
                 wav = hum_through(wav, self.sample_rate, **settings)
@@ -305,6 +346,8 @@ def main(argv=None):
                      help="respell the text the way a cat would say it (default strength: medium)")
     for sound in ("purr", "trill", "chirp"):
         say.add_argument(f"--{sound}", type=float, help=f"0..1 amount of cat {sound}s (implies --legato)")
+    say.add_argument("--keep-tail", action="store_true",
+                     help="keep whatever Chatterbox says after the last word (by default it is cut)")
     args = parser.parse_args(argv)
 
     if args.cmd == "download":
@@ -323,7 +366,7 @@ def main(argv=None):
     settings.update({k: v for k, v in given.items() if v is not None})
     cloner = VoiceCloner(device=args.device, model_dir=args.model_dir)
     cloner.set_reference(ref, exaggeration=settings["exaggeration"], loud_parts_only=args.loud_parts_only)
-    cloner.speak_to_mp3(args.text, args.out, **voices.speak_kwargs(settings))
+    cloner.speak_to_mp3(args.text, args.out, end_at_words=not args.keep_tail, **voices.speak_kwargs(settings))
     print(f"Saved {args.out}")
     return 0
 
