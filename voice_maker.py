@@ -186,6 +186,9 @@ class App:
         self.accent_var = tk.StringVar(value=ACCENT_CHOICES[0])
         ttk.Combobox(sounds, textvariable=self.accent_var, values=ACCENT_CHOICES, state="readonly", width=10).pack(
             side="left")
+        self.thesaurus_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sounds, text="Easier words (sleep → doze)", variable=self.thesaurus_var).pack(
+            side="left", padx=(12, 0))
         self.stop_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(opts, text="Stop at the last word (cut trailing babble)", variable=self.stop_var).grid(
             row=1, column=4, columnspan=2, sticky="w", pady=(6, 0))
@@ -330,6 +333,7 @@ class App:
             cfg_weight=round(self.cfg_var.get(), 2),
             legato=LEGATO_PRESETS[self.legato_var.get()],
             accent=None if accent == "Off" else accent.lower(),
+            thesaurus=self.thesaurus_var.get(),
             **{key: amount if self.sound_vars[key].get() else 0.0 for key, _, amount in CAT_SOUNDS},
         )
 
@@ -348,6 +352,7 @@ class App:
         self.cfg_var.set(s["cfg_weight"])
         self.legato_var.set(next(k for k, v in LEGATO_PRESETS.items() if v == s["legato"]))
         self.accent_var.set((s["accent"] or "off").capitalize())
+        self.thesaurus_var.set(s["thesaurus"])
         for key, var in self.sound_vars.items():
             var.set(s[key] > 0)
         self.ref_label.config(text=f"Voice: {voice['name']}  ({voice['source']})")

@@ -265,7 +265,7 @@ class VoiceCloner:
             self._reference = key
 
     def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None, cat_sounds=None,
-              accent=None, end_at_words=True):
+              accent=None, end_at_words=True, thesaurus=False):
         """Return a mono float32 waveform at self.sample_rate for text.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
@@ -273,7 +273,15 @@ class VoiceCloner:
         accent: None, or a cat_accent strength ("light", "medium", "strong") to respell the text with first
         ("river" -> "rriwerr").
         end_at_words: stop at the last spoken word, cutting any trailing babble or echo.
+        thesaurus: swap hard-to-say words for easier synonyms first ("sleep" -> "doze").
         """
+        if thesaurus:
+            from cat_thesaurus import cat_words
+
+            swapped = cat_words(text)
+            if swapped != text:
+                self.log(f"Cat thesaurus: {swapped}")
+            text = swapped
         if accent:
             from cat_accent import cat_accent
 
@@ -346,6 +354,8 @@ def main(argv=None):
                      help="respell the text the way a cat would say it (default strength: medium)")
     for sound in ("purr", "trill", "chirp"):
         say.add_argument(f"--{sound}", type=float, help=f"0..1 amount of cat {sound}s (implies --legato)")
+    say.add_argument("--cat-words", action="store_const", const=True,
+                     help="swap words a cat would struggle with for easier synonyms (sleep -> doze)")
     say.add_argument("--keep-tail", action="store_true",
                      help="keep whatever Chatterbox says after the last word (by default it is cut)")
     args = parser.parse_args(argv)
@@ -356,7 +366,7 @@ def main(argv=None):
     import voices
 
     given = dict(exaggeration=args.exaggeration, cfg_weight=args.cfg_weight, legato=args.legato,
-                 accent=args.cat_accent, purr=args.purr, trill=args.trill, chirp=args.chirp)
+                 accent=args.cat_accent, thesaurus=args.cat_words, purr=args.purr, trill=args.trill, chirp=args.chirp)
     settings = dict(voices.DEFAULT_SETTINGS)
     ref = args.ref
     if args.voice:

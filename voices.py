@@ -23,7 +23,8 @@ from chatterbox_harness import DATA_DIR, keep_loudest_parts, run_ffmpeg
 
 VOICES_DIR = os.path.join(DATA_DIR, "voices")
 
-DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, legato=None, accent=None, purr=0.0, trill=0.0, chirp=0.0)
+DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, legato=None, accent=None, thesaurus=False,
+                        purr=0.0, trill=0.0, chirp=0.0)
 # What worked best with a cat's voice: yowls only, Meow, all three cat sounds, Medium accent.
 CAT_CLIP_SETTINGS = dict(legato="meow", accent="medium", purr=0.8, trill=0.3, chirp=0.25)
 
@@ -78,6 +79,7 @@ def update_settings(name, **settings):
 
 
 def _with_paths(voice, folder):
+    voice = {**voice, "settings": {**DEFAULT_SETTINGS, **voice["settings"]}}  # voices saved before a setting existed
     return {**voice, "folder": folder, "reference": os.path.join(folder, "reference.wav")}
 
 
@@ -110,6 +112,7 @@ def speak_kwargs(settings):
         cfg_weight=settings["cfg_weight"],
         legato=settings["legato"],
         accent=settings["accent"],
+        thesaurus=settings["thesaurus"],
         cat_sounds={k: settings[k] for k in ("purr", "trill", "chirp")},
     )
 
@@ -152,6 +155,9 @@ def main(argv, download=None):
         flag = "--" + key.replace("_", "-")
         if key in ("legato", "accent"):
             add.add_argument(flag)
+        elif key == "thesaurus":
+            add.add_argument("--cat-words", dest="thesaurus", action="store_const", const=True,
+                             help="swap hard-to-say words for easier synonyms")
         else:
             add.add_argument(flag, type=float)
     vsub.add_parser("list", help="show saved voices")
