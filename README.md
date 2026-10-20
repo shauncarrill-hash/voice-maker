@@ -53,6 +53,8 @@ With an NVIDIA GPU each phrase takes a few seconds. On CPU it works but expect t
 
 **Cat accent:** respells the text before it is spoken, the way a cat's mouth would shape it, following what is known about cat vocal anatomy. Cats already make m, w, k, glottal catches, rolled trills and hisses, but their small, stiff lips can't seal for p and b or reach the teeth for f and v. *Light* holds long vowels, rolls the r, turns f into h and v into w, adds a glottal catch before vowel-initial words and turns commas into pauses. *Medium* (the usual choice) also turns b and word-initial p into m, other p into a catch, and s, z, sh, ch and j into one hiss. *Strong* also turns th into d and l into w. With Medium, "the fish are sleeping in the river" becomes "the hish 'arre shleee'ing 'in the rriwerr". Preview any line with `python cat_accent.py --strength medium "your text"`, or add `--cat-accent medium` on the command line.
 
+**Saved voices:** once a reference clip sounds right, click *Save clip as a voice…* and give it a name. The clip is cleaned up (rumble and hiss removed, silence trimmed, loudness evened out) and stored with the current settings in a `voices` folder on your computer (next to the models: `%LOCALAPPDATA%\VoiceMaker\voices` for the .exe), never in the repo. Pick a voice from *Saved voice* to make it the reference and bring its settings back; *Remember these settings* updates them. *Generate with every saved voice* speaks your phrases in each voice, one folder per voice, so you can compare them.
+
 ## Command line
 
 The harness works without the window too:
@@ -61,6 +63,18 @@ The harness works without the window too:
 .venv/bin/python chatterbox_harness.py download
 .venv/bin/python chatterbox_harness.py say --ref work/reference.wav --out hello.mp3 "Hello there!"
 ```
+
+Saved voices work from the command line too (`VoiceMaker.exe` takes the same commands):
+
+```bash
+.venv/bin/python voice_maker.py voice add "Long Johnson" --youtube "https://www.youtube.com/watch?v=kkwiQmGWK4c" 0:08 0:18 --cat-clip
+.venv/bin/python voice_maker.py voice add "Tabby" --file tabby.wav --cat-clip --accent strong
+.venv/bin/python voice_maker.py voice list
+.venv/bin/python voice_maker.py say --voice "Long Johnson" --out hello.mp3 "Hello there!"
+.venv/bin/python voice_maker.py compare --out-dir compare "Hello there little one."
+```
+
+`say --voice` uses the voice's saved settings; any flag you add (for example `--cat-accent strong`) overrides them for that run. `compare` writes one MP3 per voice; add `--voices "Tabby" "Long Johnson"` to pick some.
 
 ## Troubleshooting
 

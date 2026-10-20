@@ -1,0 +1,191 @@
+"""Voice library: named voices saved from reference clips, each remembering its best settings.
+
+Each voice is a folder in <data dir>/voices/<slug>/ holding reference.wav (cleaned up, and cut
+down to the loudest stretches for a cat clip) and voice.json (name, where the clip came from,
+and the generation settings). The folder stays on this computer; it is not part of the repo.
+
+Command line (through voice_maker.py or VoiceMaker.exe):
+    voice add "Long Johnson" --youtube URL 0:08 0:18 --cat-clip
+    voice add "Tabby" --file tabby.wav --cat-clip --exaggeration 0.4
+    voice list
+    voice remove "Tabby"
+    compare --out-dir compare "Hello there little one."
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import tempfile
+
+from chatterbox_harness import DATA_DIR, keep_loudest_parts, run_ffmpeg
+
+VOICES_DIR = os.path.join(DATA_DIR, "voices")
+
+DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, legato=None, accent=None, purr=0.0, trill=0.0, chirp=0.0)
+# What worked best with a cat's voice: yowls only, Meow, all three cat sounds, Medium accent.
+CAT_CLIP_SETTINGS = dict(legato="meow", accent="medium", purr=0.8, trill=0.3, chirp=0.25)
+
+# Denoise, drop rumble, trim silence at both ends (not in the middle), even out loudness.
+CLEAN_FILTER = (
+    "highpass=f=80,afftdn=nf=-25,"
+    "silenceremove=start_periods=1:start_threshold=-45dB,areverse,"
+    "silenceremove=start_periods=1:start_threshold=-45dB,areverse,"
+    "loudnorm=I=-18:TP=-2"
+)
+
+
+def slugify(name):
+    return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").lower() or "voice"
+
+
+def clean_clip(src, dst):
+    run_ffmpeg(["-i", src, "-af", CLEAN_FILTER, "-ac", "1", "-ar", "24000", dst])
+    return dst
+
+
+def save_voice(name, clip_path, cat_clip=False, source=None, **settings):
+    """Clean clip_path and store it as a named voice. Returns the voice."""
+    folder = os.path.join(VOICES_DIR, slugify(name))
+    os.makedirs(folder, exist_ok=True)
+    reference = os.path.join(folder, "reference.wav")
+    tmp = tempfile.mkdtemp(dir=folder)
+    try:
+        cleaned = clean_clip(clip_path, os.path.join(tmp, "clean.wav"))
+        if cat_clip:
+            keep_loudest_parts(cleaned, reference)
+        else:
+            shutil.move(cleaned, reference)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    chosen = {**DEFAULT_SETTINGS, **(CAT_CLIP_SETTINGS if cat_clip else {})}
+    chosen.update({k: v for k, v in settings.items() if k in DEFAULT_SETTINGS and v is not None})
+    voice = {"name": name, "cat_clip": cat_clip, "source": source or os.path.abspath(clip_path), "settings": chosen}
+    with open(os.path.join(folder, "voice.json"), "w", encoding="utf-8") as f:
+        json.dump(voice, f, indent=2)
+    return _with_paths(voice, folder)
+
+
+def update_settings(name, **settings):
+    """Change a saved voice's remembered settings."""
+    voice = get_voice(name)
+    voice["settings"].update({k: v for k, v in settings.items() if k in DEFAULT_SETTINGS})
+    stored = {k: voice[k] for k in ("name", "cat_clip", "source", "settings")}
+    with open(os.path.join(voice["folder"], "voice.json"), "w", encoding="utf-8") as f:
+        json.dump(stored, f, indent=2)
+    return voice
+
+
+def _with_paths(voice, folder):
+    return {**voice, "folder": folder, "reference": os.path.join(folder, "reference.wav")}
+
+
+def list_voices():
+    voices = []
+    if os.path.isdir(VOICES_DIR):
+        for slug in sorted(os.listdir(VOICES_DIR)):
+            meta = os.path.join(VOICES_DIR, slug, "voice.json")
+            if os.path.exists(meta):
+                with open(meta, encoding="utf-8") as f:
+                    voices.append(_with_paths(json.load(f), os.path.join(VOICES_DIR, slug)))
+    return voices
+
+
+def get_voice(name):
+    for voice in list_voices():
+        if voice["name"].lower() == name.lower() or os.path.basename(voice["folder"]) == slugify(name):
+            return voice
+    raise KeyError(f"No saved voice called {name!r}. Saved voices: {', '.join(v['name'] for v in list_voices())}")
+
+
+def remove_voice(name):
+    shutil.rmtree(get_voice(name)["folder"])
+
+
+def speak_kwargs(settings):
+    """Turn a voice's settings into VoiceCloner.speak keyword arguments."""
+    return dict(
+        exaggeration=settings["exaggeration"],
+        cfg_weight=settings["cfg_weight"],
+        legato=settings["legato"],
+        accent=settings["accent"],
+        cat_sounds={k: settings[k] for k in ("purr", "trill", "chirp")},
+    )
+
+
+def speak_as(cloner, voice, text, mp3_path):
+    """Speak text in a saved voice with its remembered settings."""
+    cloner.set_reference(voice["reference"], exaggeration=voice["settings"]["exaggeration"])
+    return cloner.speak_to_mp3(text, mp3_path, **speak_kwargs(voice["settings"]))
+
+
+def render_all(cloner, text, out_dir, voices=None, log=print):
+    """Say text in every saved voice; returns the MP3 paths (one per voice)."""
+    voices = voices if voices is not None else list_voices()
+    if not voices:
+        raise RuntimeError("No saved voices yet. Save one first.")
+    os.makedirs(out_dir, exist_ok=True)
+    paths = []
+    for voice in voices:
+        log(f"Speaking as {voice['name']}…")
+        paths.append(speak_as(cloner, voice, text, os.path.join(out_dir, slugify(voice["name"]) + ".mp3")))
+    return paths
+
+
+def main(argv, download=None):
+    """voice add/list/remove and compare. download(url, start, end, out_wav) fetches a YouTube clip;
+    start and end are timestamps as typed, e.g. "0:08"."""
+    from chatterbox_harness import VoiceCloner
+
+    parser = argparse.ArgumentParser(prog="voice", description="Saved voices")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    voice = sub.add_parser("voice", help="manage saved voices")
+    vsub = voice.add_subparsers(dest="action", required=True)
+    add = vsub.add_parser("add", help="save a clip as a named voice")
+    add.add_argument("name")
+    src = add.add_mutually_exclusive_group(required=True)
+    src.add_argument("--file", help="local audio file")
+    src.add_argument("--youtube", nargs=3, metavar=("URL", "START", "END"), help="YouTube link and start/end times")
+    add.add_argument("--cat-clip", action="store_true", help="keep only the yowls and use the cat settings")
+    for key, value in DEFAULT_SETTINGS.items():
+        flag = "--" + key.replace("_", "-")
+        if key in ("legato", "accent"):
+            add.add_argument(flag)
+        else:
+            add.add_argument(flag, type=float)
+    vsub.add_parser("list", help="show saved voices")
+    rm = vsub.add_parser("remove", help="delete a saved voice")
+    rm.add_argument("name")
+    compare = sub.add_parser("compare", help="say one line in every saved voice")
+    compare.add_argument("text")
+    compare.add_argument("--out-dir", required=True)
+    compare.add_argument("--voices", nargs="+", metavar="NAME", help="only these voices (default: all)")
+    compare.add_argument("--device", choices=["cuda", "mps", "cpu"])
+    args = parser.parse_args(argv)
+
+    if args.cmd == "compare":
+        chosen = [get_voice(n) for n in args.voices] if args.voices else None
+        paths = render_all(VoiceCloner(device=args.device), args.text, args.out_dir, chosen)
+        print("\n".join(f"Saved {p}" for p in paths))
+    elif args.action == "list":
+        for v in list_voices():
+            print(f"{v['name']}: {v['source']}  {v['settings']}")
+    elif args.action == "remove":
+        remove_voice(args.name)
+        print(f"Removed {args.name}")
+    else:
+        settings = {k: getattr(args, k) for k in DEFAULT_SETTINGS}
+        if args.youtube:
+            url, start, end = args.youtube
+            tmp = tempfile.mkdtemp()
+            try:
+                clip = os.path.join(tmp, "clip.wav")
+                download(url, start, end, clip)
+                v = save_voice(args.name, clip, args.cat_clip, f"{url} {start}-{end}", **settings)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        else:
+            v = save_voice(args.name, args.file, args.cat_clip, **settings)
+        print(f"Saved voice {v['name']} -> {v['reference']}")
+    return 0

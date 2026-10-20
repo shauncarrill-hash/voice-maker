@@ -14,8 +14,9 @@ import sys
 import tempfile
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
+import voices
 from chatterbox_harness import DATA_DIR, FROZEN, VoiceCloner, ffmpeg_exe, run_ffmpeg
 
 WORK_DIR = os.path.join(DATA_DIR, "work")
@@ -140,6 +141,17 @@ class App:
             step1, text="Cat clip: use only the yowls, with Meow, all cat sounds and a Medium accent",
             variable=self.cat_clip_var, command=self.on_cat_clip,
         ).grid(row=4, column=0, columnspan=4, sticky="w", **pad)
+        saved = ttk.Frame(step1)
+        saved.grid(row=5, column=0, columnspan=4, sticky="w", **pad)
+        ttk.Label(saved, text="Saved voice:").pack(side="left")
+        self.voice_var = tk.StringVar()
+        self.voice_box = ttk.Combobox(saved, textvariable=self.voice_var, state="readonly", width=28)
+        self.voice_box.pack(side="left", padx=4)
+        self.voice_box.bind("<<ComboboxSelected>>", lambda _: self.on_use_voice())
+        self.save_voice_btn = ttk.Button(saved, text="Save clip as a voice…", command=self.on_save_voice)
+        self.save_voice_btn.pack(side="left", padx=4)
+        ttk.Button(saved, text="Remember these settings", command=self.on_update_voice).pack(side="left")
+        self.refresh_voices()
         step1.columnconfigure(1, weight=1)
 
         # Step 2: phrases
@@ -192,6 +204,8 @@ class App:
         self.gen_btn.pack(side="left")
         self.load_btn = ttk.Button(buttons, text="Download / load voice model", command=self.on_load_model)
         self.load_btn.pack(side="left", padx=8)
+        self.all_btn = ttk.Button(buttons, text="Generate with every saved voice", command=self.on_generate_all)
+        self.all_btn.pack(side="left")
 
         # Status
         self.progress = ttk.Progressbar(root, mode="indeterminate")
@@ -211,6 +225,8 @@ class App:
         self.clip_btn.config(state=state)
         self.gen_btn.config(state=state)
         self.load_btn.config(state=state)
+        self.all_btn.config(state=state)
+        self.save_voice_btn.config(state=state)
         if busy:
             self.progress.start(12)
         else:
@@ -242,6 +258,8 @@ class App:
                 elif kind == "error":
                     self.status.config(text="Error.")
                     messagebox.showerror("Voice Maker", payload)
+                elif kind == "voices":
+                    self.refresh_voices(payload)
                 elif kind == "done":
                     self.set_busy(False)
         except queue.Empty:
@@ -298,7 +316,87 @@ class App:
         )
         if path:
             self.reference_wav = path
+            self.voice_var.set("")
             self.ref_label.config(text=f"Reference clip: {path}")
+
+    # ---- saved voices --------------------------------------------------
+    def current_settings(self):
+        accent = self.accent_var.get()
+        return dict(
+            exaggeration=round(self.exag_var.get(), 2),
+            cfg_weight=round(self.cfg_var.get(), 2),
+            legato=LEGATO_PRESETS[self.legato_var.get()],
+            accent=None if accent == "Off" else accent.lower(),
+            **{key: amount if self.sound_vars[key].get() else 0.0 for key, _, amount in CAT_SOUNDS},
+        )
+
+    def refresh_voices(self, select=None):
+        self.voice_box.config(values=[v["name"] for v in voices.list_voices()])
+        if select:
+            self.voice_var.set(select)
+
+    def on_use_voice(self):
+        """Picking a saved voice makes it the reference and restores its remembered settings."""
+        voice = voices.get_voice(self.voice_var.get())
+        s = voice["settings"]
+        self.reference_wav = voice["reference"]
+        self.cat_clip_var.set(False)  # its reference was already cut down when it was saved
+        self.exag_var.set(s["exaggeration"])
+        self.cfg_var.set(s["cfg_weight"])
+        self.legato_var.set(next(k for k, v in LEGATO_PRESETS.items() if v == s["legato"]))
+        self.accent_var.set((s["accent"] or "off").capitalize())
+        for key, var in self.sound_vars.items():
+            var.set(s[key] > 0)
+        self.ref_label.config(text=f"Voice: {voice['name']}  ({voice['source']})")
+
+    def on_save_voice(self):
+        if not self.reference_wav or not os.path.exists(self.reference_wav):
+            messagebox.showwarning("Voice Maker", "Get a reference clip first.")
+            return
+        name = simpledialog.askstring("Voice Maker", "Name for this voice:", parent=self.root)
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        clip, cat_clip, settings = self.reference_wav, self.cat_clip_var.get(), self.current_settings()
+        url = self.url_var.get().strip()
+        source = f"{url} {self.start_var.get()}-{self.end_var.get()}" if clip == os.path.join(WORK_DIR, "reference.wav") and url else None
+
+        def task():
+            self.set_status(f"Saving voice {name}…")
+            voices.save_voice(name, clip, cat_clip, source, **settings)
+            self.events.put(("voices", name))
+            self.set_status(f"Saved voice {name}. Pick it any time under Saved voice.")
+
+        self.run_in_background(task)
+
+    def on_update_voice(self):
+        if not self.voice_var.get():
+            messagebox.showwarning("Voice Maker", "Pick a saved voice first.")
+            return
+        voices.update_settings(self.voice_var.get(), **self.current_settings())
+        self.set_status(f"{self.voice_var.get()} will use these settings from now on.")
+
+    def on_generate_all(self):
+        phrases = self.phrases()
+        saved = voices.list_voices()
+        if not saved:
+            messagebox.showwarning("Voice Maker", "Save a voice first (step 1).")
+            return
+        if not phrases:
+            messagebox.showwarning("Voice Maker", "Type at least one phrase.")
+            return
+        out_dir = self.out_var.get().strip() or DEFAULT_OUT_DIR
+
+        def task():
+            for voice in saved:
+                folder = os.path.join(out_dir, voices.slugify(voice["name"]))
+                os.makedirs(folder, exist_ok=True)
+                for i, phrase in enumerate(phrases, 1):
+                    self.set_status(f"{voice['name']} {i}/{len(phrases)}: {phrase[:50]}")
+                    voices.speak_as(self.cloner, voice, phrase, os.path.join(folder, f"{i:02d}_{slugify(phrase)}.mp3"))
+            self.set_status(f"Done. One folder per voice in {out_dir}")
+
+        self.run_in_background(task)
 
     def on_browse(self):
         path = filedialog.askdirectory(initialdir=self.out_var.get() or DATA_DIR)
@@ -315,38 +413,29 @@ class App:
         else:
             subprocess.Popen(["xdg-open", path])
 
+    def phrases(self):
+        return [line.strip() for line in self.text.get("1.0", "end").splitlines() if line.strip()]
+
     def on_generate(self):
         if not self.reference_wav or not os.path.exists(self.reference_wav):
             messagebox.showwarning("Voice Maker", "Get a reference clip first (step 1).")
             return
-        phrases = [line.strip() for line in self.text.get("1.0", "end").splitlines() if line.strip()]
+        phrases = self.phrases()
         if not phrases:
             messagebox.showwarning("Voice Maker", "Type at least one phrase.")
             return
         out_dir = self.out_var.get().strip() or DEFAULT_OUT_DIR
-        exaggeration = self.exag_var.get()
-        cfg_weight = self.cfg_var.get()
-        legato = LEGATO_PRESETS[self.legato_var.get()]
-        accent = None if self.accent_var.get() == "Off" else self.accent_var.get().lower()
-        cat_sounds = {key: amount if self.sound_vars[key].get() else 0.0 for key, _, amount in CAT_SOUNDS}
+        settings = self.current_settings()
         reference = self.reference_wav
         loud_parts_only = self.cat_clip_var.get()
 
         def task():
             os.makedirs(out_dir, exist_ok=True)
-            self.cloner.set_reference(reference, exaggeration=exaggeration, loud_parts_only=loud_parts_only)
+            self.cloner.set_reference(reference, exaggeration=settings["exaggeration"], loud_parts_only=loud_parts_only)
             for i, phrase in enumerate(phrases, 1):
                 self.set_status(f"Generating {i}/{len(phrases)}: {phrase[:50]}")
                 name = f"{i:02d}_{slugify(phrase)}.mp3"
-                self.cloner.speak_to_mp3(
-                    phrase,
-                    os.path.join(out_dir, name),
-                    exaggeration=exaggeration,
-                    cfg_weight=cfg_weight,
-                    legato=legato,
-                    cat_sounds=cat_sounds,
-                    accent=accent,
-                )
+                self.cloner.speak_to_mp3(phrase, os.path.join(out_dir, name), **voices.speak_kwargs(settings))
             self.set_status(f"Done. Saved {len(phrases)} MP3 file(s) to {out_dir}")
 
         self.run_in_background(task)
@@ -366,6 +455,9 @@ def run_command_line(args):
             download_clip(url, parse_timestamp(start), parse_timestamp(end), os.path.abspath(out_wav))
             print(f"Saved {out_wav}")
             return 0
+        if args[0] in ("voice", "compare"):
+            return voices.main(args, download=lambda url, start, end, out: download_clip(
+                url, parse_timestamp(start), parse_timestamp(end), out))
         return chatterbox_harness.main(args)
     except BaseException:
         traceback.print_exc()
@@ -377,7 +469,7 @@ def main():
         # A windowed .exe has no console; send library output (progress bars, warnings) to a log file.
         os.makedirs(DATA_DIR, exist_ok=True)
         sys.stdout = sys.stderr = open(os.path.join(DATA_DIR, "voice_maker.log"), "a", encoding="utf-8", buffering=1)
-    if len(sys.argv) > 1 and sys.argv[1] in ("download", "say", "clip"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("download", "say", "clip", "voice", "compare"):
         sys.exit(run_command_line(sys.argv[1:]))
     if not ffmpeg_exe():
         tk.Tk().withdraw()

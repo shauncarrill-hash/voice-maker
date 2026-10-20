@@ -290,29 +290,40 @@ def main(argv=None):
     sub.add_parser("download", help="download the model weights into ./models/chatterbox")
     say = sub.add_parser("say", help="speak text in the voice of a reference clip")
     say.add_argument("text")
-    say.add_argument("--ref", required=True, help="reference voice clip (wav/mp3)")
+    ref = say.add_mutually_exclusive_group(required=True)
+    ref.add_argument("--ref", help="reference voice clip (wav/mp3)")
+    ref.add_argument("--voice", help="a saved voice (see: voice list); its settings are used unless given here")
     say.add_argument("--out", required=True, help="output MP3 path")
     say.add_argument("--device", choices=["cuda", "mps", "cpu"])
     say.add_argument("--model-dir", default=MODEL_DIR)
-    say.add_argument("--exaggeration", type=float, default=0.5)
-    say.add_argument("--cfg-weight", type=float, default=0.5)
+    say.add_argument("--exaggeration", type=float)
+    say.add_argument("--cfg-weight", type=float)
     say.add_argument("--loud-parts-only", action="store_true",
                      help="use only the reference's loudest stretches, e.g. a cat's yowls without the humming")
     say.add_argument("--legato", choices=["legato", "meow", "kitten"], help="hum through word gaps (cat voice)")
     say.add_argument("--cat-accent", nargs="?", const="medium", choices=["light", "medium", "strong"],
                      help="respell the text the way a cat would say it (default strength: medium)")
     for sound in ("purr", "trill", "chirp"):
-        say.add_argument(f"--{sound}", type=float, default=0.0, help=f"0..1 amount of cat {sound}s (implies --legato)")
+        say.add_argument(f"--{sound}", type=float, help=f"0..1 amount of cat {sound}s (implies --legato)")
     args = parser.parse_args(argv)
 
     if args.cmd == "download":
         download_model()
         return 0
+    import voices
+
+    given = dict(exaggeration=args.exaggeration, cfg_weight=args.cfg_weight, legato=args.legato,
+                 accent=args.cat_accent, purr=args.purr, trill=args.trill, chirp=args.chirp)
+    settings = dict(voices.DEFAULT_SETTINGS)
+    ref = args.ref
+    if args.voice:
+        voice = voices.get_voice(args.voice)
+        settings.update(voice["settings"])
+        ref = voice["reference"]
+    settings.update({k: v for k, v in given.items() if v is not None})
     cloner = VoiceCloner(device=args.device, model_dir=args.model_dir)
-    cloner.set_reference(args.ref, exaggeration=args.exaggeration, loud_parts_only=args.loud_parts_only)
-    cloner.speak_to_mp3(args.text, args.out, exaggeration=args.exaggeration, cfg_weight=args.cfg_weight,
-                        legato=args.legato, cat_sounds={"purr": args.purr, "trill": args.trill, "chirp": args.chirp},
-                        accent=args.cat_accent)
+    cloner.set_reference(ref, exaggeration=settings["exaggeration"], loud_parts_only=args.loud_parts_only)
+    cloner.speak_to_mp3(args.text, args.out, **voices.speak_kwargs(settings))
     print(f"Saved {args.out}")
     return 0
 

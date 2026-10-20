@@ -70,6 +70,10 @@ jobs:
           Run-App @('say','--device','cpu','--ref',$ref,'--legato','meow','--cat-accent','--purr','0.8','--trill','0.3','--chirp','0.25','--out','smoke_meow.mp3','"Hello there. Meow."') 30
           Show-Log "Cat legato log"
           if (-not (Test-Path smoke_meow.mp3)) { throw "Cat legato smoke test produced no MP3" }
+          Run-App @('voice','add','Smoke','--file',$ref,'--cat-clip') 5
+          Run-App @('say','--device','cpu','--voice','Smoke','--out','smoke_voice.mp3','"Hello from a saved voice."') 30
+          Show-Log "Saved voice log"
+          if (-not (Test-Path smoke_voice.mp3)) { throw "Saved voice smoke test produced no MP3" }
 
       - name: Upload smoke test audio
         if: matrix.edition == 'cpu'
@@ -79,6 +83,7 @@ jobs:
           path: |
             smoke.mp3
             smoke_meow.mp3
+            smoke_voice.mp3
             yt.wav
           if-no-files-found: ignore
 
