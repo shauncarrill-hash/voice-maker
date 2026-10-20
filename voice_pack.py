@@ -40,14 +40,15 @@ FORMATS = ("ogg", "mp3", "wav")
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
-def read_lines(path):
+def read_lines(path, status=None):
     """Return [(id, text, speaker)] from a CSV or a plain text file (one line per row).
 
     A CSV with a header row uses its "id", "text" and optional "speaker" and "spoken" columns
     (others are ignored); "spoken", when filled, is what gets recorded instead of the on-screen
     text, e.g. without a {price} the game fills in. Without a header the first column is the id
     and the rest is the text. speaker is None when the file doesn't say. Lines with nothing to
-    say (no letters, like "...") are left out.
+    say (no letters, like "...") are left out. With status, only CSV rows whose "status" column
+    matches it (e.g. "existing") are returned.
     """
     with open(path, encoding="utf-8-sig", newline="") as f:
         content = f.read()
@@ -56,9 +57,13 @@ def read_lines(path):
         table = [r for r in csv.reader(content.splitlines()) if r and r[0].strip() and not r[0].startswith("#")]
         header = [c.strip().lower() for c in table[0]] if table else []
         if "id" in header and "text" in header:
-            col = {name: header.index(name) for name in ("id", "text", "speaker", "spoken") if name in header}
+            col = {name: header.index(name) for name in ("id", "text", "speaker", "spoken", "status") if name in header}
+            if status and "status" not in col:
+                raise ValueError(f"{path} has no status column")
             for r in table[1:]:
                 r = r + [""] * (len(header) - len(r))
+                if status and r[col["status"]].strip().lower() != status.lower():
+                    continue
                 speaker = r[col["speaker"]].strip() if "speaker" in col else ""
                 spoken = r[col["spoken"]].strip() if "spoken" in col else ""
                 rows.append((r[col["id"]].strip(), spoken or r[col["text"]].strip(), speaker or None))
@@ -125,9 +130,12 @@ def _take_hash(text, voice, seed):
 
 
 def make_pack(cloner, lines, out_dir, voices=None, pitches=DEFAULT_PITCHES, fmt="ogg", force=False, log=print,
-              speakers=None):
+              speakers=None, only=None):
     """Render lines ([(id, text)] or [(id, text, speaker)]) in every voice and pitch, or only in each
-    speaker's voice when speakers (from read_speakers) says so; returns the manifest path."""
+    speaker's voice when speakers (from read_speakers) says so; returns the manifest path.
+
+    With only (a set of line ids), just those lines are rendered; the rest keep whatever files
+    they already had, so a pack can be recorded a part at a time."""
     voices = voices if voices is not None else library.list_voices()
     if not voices:
         raise RuntimeError("No saved voices yet. Save some voices first.")
@@ -176,8 +184,8 @@ def make_pack(cloner, lines, out_dir, voices=None, pitches=DEFAULT_PITCHES, fmt=
             json.dump(manifest, f, indent=2, ensure_ascii=False)
         os.replace(tmp, manifest_path)
 
-    total, done, rendered, spent = sum(1 for v in voices for _, _, sp in lines
-                                       if wanted(sp, library.slugify(v["name"]))), 0, 0, 0.0
+    total, done, rendered, spent = sum(1 for v in voices for i, _, sp in lines
+                                       if (only is None or i in only) and wanted(sp, library.slugify(v["name"]))), 0, 0, 0.0
     for voice in voices:
         slug, seed = library.slugify(voice["name"]), voice_seed(voice)
         base_pitch = voice["settings"]["pitch"]
@@ -186,13 +194,18 @@ def make_pack(cloner, lines, out_dir, voices=None, pitches=DEFAULT_PITCHES, fmt=
             line_pitches = wanted(speaker, slug)
             if not line_pitches:
                 continue
-            done += 1
             take = _take_hash(text, voice, seed)
             entries = {}
             for p in line_pitches:
                 rel = f"{slug}/{pitch_folder(p)}/{line_id}.{fmt}"
                 entries[f"{slug}_{pitch_folder(p)}"] = {"path": rel, "pitch": p, "take": take}
             previous = old.get(line_id, {}).get("files", {})
+            if only is not None and line_id not in only:
+                manifest["lines"][line_id]["files"].update(
+                    {k: previous[k] for k in entries if k in previous
+                     and os.path.exists(os.path.join(out_dir, previous[k]["path"]))})
+                continue
+            done += 1
             if all(previous.get(k, {}).get("take") == take and os.path.exists(os.path.join(out_dir, e["path"]))
                    for k, e in entries.items()):
                 for k, e in entries.items():
