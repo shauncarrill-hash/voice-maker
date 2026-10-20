@@ -248,7 +248,7 @@ def main(argv, download=None):
         remove_voice(args.name)
         print(f"Removed {args.name}")
     else:
-        settings = {k: getattr(args, k) for k in DEFAULT_SETTINGS}
+        settings = {k: getattr(args, k, None) for k in DEFAULT_SETTINGS}
         if args.youtube:
             url, start, end = args.youtube
             tmp = tempfile.mkdtemp()
