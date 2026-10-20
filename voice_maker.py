@@ -466,6 +466,8 @@ def run_command_line(args):
             return voices.main(args, download=lambda url, start, end, out: download_clip(
                 url, parse_timestamp(start), parse_timestamp(end), out))
         return chatterbox_harness.main(args)
+    except SystemExit as exc:  # --help, or an argument error already printed by argparse
+        return exc.code or 0
     except BaseException:
         traceback.print_exc()
         return 1
@@ -476,15 +478,24 @@ def main():
         # A windowed .exe has no console; send library output (progress bars, warnings) to a log file.
         os.makedirs(DATA_DIR, exist_ok=True)
         sys.stdout = sys.stderr = open(os.path.join(DATA_DIR, "voice_maker.log"), "a", encoding="utf-8", buffering=1)
+        print(f"Voice Maker started {' '.join(sys.argv[1:]) or '(window)'}")
     if len(sys.argv) > 1 and sys.argv[1] in ("download", "say", "clip", "voice", "compare"):
         sys.exit(run_command_line(sys.argv[1:]))
     if not ffmpeg_exe():
         tk.Tk().withdraw()
         messagebox.showerror("Voice Maker", "ffmpeg was not found on your PATH. Install it first (see README).")
         return
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+    try:
+        root = tk.Tk()
+        App(root)
+        root.mainloop()
+    except Exception:  # a windowed .exe has nowhere else to show this
+        import traceback
+
+        traceback.print_exc()
+        messagebox.showerror("Voice Maker", traceback.format_exc())
+        raise
+    print("Voice Maker window closed")
 
 
 if __name__ == "__main__":
