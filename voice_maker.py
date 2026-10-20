@@ -163,6 +163,8 @@ class App:
         for key, label, _ in CAT_SOUNDS:
             self.sound_vars[key] = tk.BooleanVar(value=False)
             ttk.Checkbutton(sounds, text=label, variable=self.sound_vars[key]).pack(side="left", padx=(0, 12))
+        self.accent_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sounds, text="Cat accent (moon → nooon)", variable=self.accent_var).pack(side="left")
         for var, lbl in ((self.exag_var, self.exag_lbl), (self.cfg_var, self.cfg_lbl)):
             var.trace_add("write", lambda *_, v=var, l=lbl: l.config(text=f"{v.get():.2f}"))
             lbl.config(text=f"{var.get():.2f}")
@@ -308,6 +310,7 @@ class App:
         exaggeration = self.exag_var.get()
         cfg_weight = self.cfg_var.get()
         legato = LEGATO_PRESETS[self.legato_var.get()]
+        accent = self.accent_var.get()
         cat_sounds = {key: amount if self.sound_vars[key].get() else 0.0 for key, _, amount in CAT_SOUNDS}
         reference = self.reference_wav
 
@@ -324,6 +327,7 @@ class App:
                     cfg_weight=cfg_weight,
                     legato=legato,
                     cat_sounds=cat_sounds,
+                    accent=accent,
                 )
             self.set_status(f"Done. Saved {len(phrases)} MP3 file(s) to {out_dir}")
 

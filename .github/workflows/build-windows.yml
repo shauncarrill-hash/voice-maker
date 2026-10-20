@@ -67,7 +67,7 @@ jobs:
           if (-not (Test-Path smoke.mp3)) { throw "Smoke test produced no MP3" }
           $dur = & ($env:FFMPEG_BIN -replace 'ffmpeg.exe$','ffprobe.exe') -v error -show_entries format=duration -of csv=p=0 smoke.mp3
           Write-Host "::notice::Smoke test MP3: $dur seconds, generated in $([int]((Get-Date)-$start).TotalSeconds) s (includes model download)"
-          Run-App @('say','--device','cpu','--ref',$ref,'--legato','meow','--purr','0.8','--trill','0.3','--chirp','0.25','--out','smoke_meow.mp3','"Hello there. Meow."') 30
+          Run-App @('say','--device','cpu','--ref',$ref,'--legato','meow','--cat-accent','--purr','0.8','--trill','0.3','--chirp','0.25','--out','smoke_meow.mp3','"Hello there. Meow."') 30
           Show-Log "Cat legato log"
           if (-not (Test-Path smoke_meow.mp3)) { throw "Cat legato smoke test produced no MP3" }
 

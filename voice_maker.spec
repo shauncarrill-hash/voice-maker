@@ -24,7 +24,7 @@ for dist in [
     except Exception:
         print(f"no metadata for {dist}")
 
-hiddenimports += ["pkg_resources", "tkinter", "chatterbox_harness", "cat_legato"]
+hiddenimports += ["pkg_resources", "tkinter", "chatterbox_harness", "cat_legato", "cat_accent"]
 
 ffmpeg = os.environ.get("FFMPEG_BIN")
 if ffmpeg:
