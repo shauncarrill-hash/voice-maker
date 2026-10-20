@@ -43,9 +43,11 @@ SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 def read_lines(path):
     """Return [(id, text, speaker)] from a CSV or a plain text file (one line per row).
 
-    A CSV with a header row uses its "id", "text" and optional "speaker" columns (others are
-    ignored); without a header the first column is the id and the rest is the text.
-    speaker is None when the file doesn't say.
+    A CSV with a header row uses its "id", "text" and optional "speaker" and "spoken" columns
+    (others are ignored); "spoken", when filled, is what gets recorded instead of the on-screen
+    text, e.g. without a {price} the game fills in. Without a header the first column is the id
+    and the rest is the text. speaker is None when the file doesn't say. Lines with nothing to
+    say (no letters, like "...") are left out.
     """
     with open(path, encoding="utf-8-sig", newline="") as f:
         content = f.read()
@@ -54,11 +56,12 @@ def read_lines(path):
         table = [r for r in csv.reader(content.splitlines()) if r and r[0].strip() and not r[0].startswith("#")]
         header = [c.strip().lower() for c in table[0]] if table else []
         if "id" in header and "text" in header:
-            col = {name: header.index(name) for name in ("id", "text", "speaker") if name in header}
+            col = {name: header.index(name) for name in ("id", "text", "speaker", "spoken") if name in header}
             for r in table[1:]:
                 r = r + [""] * (len(header) - len(r))
                 speaker = r[col["speaker"]].strip() if "speaker" in col else ""
-                rows.append((r[col["id"]].strip(), r[col["text"]].strip(), speaker or None))
+                spoken = r[col["spoken"]].strip() if "spoken" in col else ""
+                rows.append((r[col["id"]].strip(), spoken or r[col["text"]].strip(), speaker or None))
         else:
             rows = [(r[0].strip(), ",".join(r[1:]).strip(), None) for r in table if len(r) >= 2]
     else:
@@ -67,6 +70,7 @@ def read_lines(path):
             if text and not text.startswith("#"):
                 slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:40] or "line"
                 rows.append((f"{slug}_{zlib.crc32(text.encode()):08x}"[:52], text, None))
+    rows = [row for row in rows if re.search(r"[A-Za-z]", row[1]) or not row[1]]
     seen = set()
     for line_id, text, _ in rows:
         if not SAFE_ID.match(line_id):
