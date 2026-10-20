@@ -183,8 +183,9 @@ class VoiceCloner:
             from cat_legato import PRESETS, legato as hum_through
 
             settings = {**PRESETS[legato], **(cat_sounds or {})}
-            # One sentence at a time so the pauses between sentences survive the effect.
-            chunks = [piece for sentence in re.split(r"(?<=[.!?])\s+", text) for piece in split_text(sentence)]
+            # One sentence at a time so the pauses between sentences survive the effect
+            # ("..." from the cat accent stays inside its sentence).
+            chunks = [piece for sentence in re.split(r"(?<=[^.][.!?])\s+", text) for piece in split_text(sentence)]
         else:
             chunks = split_text(text)
         parts = []
