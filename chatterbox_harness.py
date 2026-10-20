@@ -274,7 +274,7 @@ class VoiceCloner:
             self._reference = key
 
     def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None, cat_sounds=None,
-              accent=None, end_at_words=True, thesaurus=False):
+              accent=None, end_at_words=True, thesaurus=False, pitch=0.0):
         """Return a mono float32 waveform at self.sample_rate for text.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
@@ -283,6 +283,7 @@ class VoiceCloner:
         ("river" -> "rriwerr").
         end_at_words: stop at the last spoken word, cutting any trailing babble or echo.
         thesaurus: swap hard-to-say words for easier synonyms first ("sleep" -> "doze").
+        pitch: semitones to raise the voice (negative lowers it), on top of the legato preset's own.
         """
         if thesaurus:
             from cat_thesaurus import cat_words
@@ -306,6 +307,7 @@ class VoiceCloner:
             from cat_legato import PRESETS, legato as hum_through
 
             settings = {**PRESETS[legato], **(cat_sounds or {})}
+            settings["pitch"] += pitch
             # One sentence at a time so the pauses between sentences survive the effect
             # ("..." from the cat accent stays inside its sentence).
             chunks = [piece for sentence in re.split(r"(?<=[^.][.!?])\s+", text) for piece in split_text(sentence)]
@@ -330,6 +332,10 @@ class VoiceCloner:
             if legato:
                 self.log("Applying cat legato…")
                 wav = hum_through(wav, self.sample_rate, **settings)
+            elif pitch:
+                from cat_legato import shift_pitch
+
+                wav = shift_pitch(wav, self.sample_rate, pitch)
             if parts:
                 parts.append(gap)
             parts.append(wav)
@@ -365,6 +371,7 @@ def main(argv=None):
         say.add_argument(f"--{sound}", type=float, help=f"0..1 amount of cat {sound}s (implies --legato)")
     say.add_argument("--cat-words", action="store_const", const=True,
                      help="swap words a cat would struggle with for easier synonyms (sleep -> doze)")
+    say.add_argument("--pitch", type=float, help="semitones to raise the voice (negative lowers it)")
     say.add_argument("--keep-tail", action="store_true",
                      help="keep whatever Chatterbox says after the last word (by default it is cut)")
     args = parser.parse_args(argv)
@@ -375,7 +382,7 @@ def main(argv=None):
     import voices
 
     given = dict(exaggeration=args.exaggeration, cfg_weight=args.cfg_weight, legato=args.legato,
-                 accent=args.cat_accent, thesaurus=args.cat_words, purr=args.purr, trill=args.trill, chirp=args.chirp)
+                 accent=args.cat_accent, thesaurus=args.cat_words, pitch=args.pitch, purr=args.purr, trill=args.trill, chirp=args.chirp)
     settings = dict(voices.DEFAULT_SETTINGS)
     ref = args.ref
     if args.voice:

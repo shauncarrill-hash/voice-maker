@@ -23,7 +23,7 @@ from chatterbox_harness import DATA_DIR, keep_loudest_parts, run_ffmpeg, unused_
 
 VOICES_DIR = os.path.join(DATA_DIR, "voices")
 
-DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, legato=None, accent=None, thesaurus=False,
+DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, pitch=0.0, legato=None, accent=None, thesaurus=False,
                         purr=0.0, trill=0.0, chirp=0.0)
 # What worked best with a cat's voice: yowls only, Meow, all three cat sounds, Medium accent.
 CAT_CLIP_SETTINGS = dict(legato="meow", accent="medium", purr=0.8, trill=0.3, chirp=0.25)
@@ -110,6 +110,7 @@ def speak_kwargs(settings):
     return dict(
         exaggeration=settings["exaggeration"],
         cfg_weight=settings["cfg_weight"],
+        pitch=settings["pitch"],
         legato=settings["legato"],
         accent=settings["accent"],
         thesaurus=settings["thesaurus"],

@@ -172,6 +172,14 @@ class App:
         ttk.Scale(opts, from_=0.0, to=1.0, variable=self.cfg_var, length=160).grid(row=0, column=4, padx=4)
         self.cfg_lbl = ttk.Label(opts, width=5)
         self.cfg_lbl.grid(row=0, column=5)
+        ttk.Label(opts, text="Pitch").grid(row=0, column=6, sticky="w", padx=(16, 0))
+        self.pitch_var = tk.DoubleVar(value=0.0)
+        ttk.Scale(opts, from_=-12.0, to=12.0, variable=self.pitch_var, length=140,
+                  command=lambda v: self.pitch_var.set(round(float(v)))).grid(row=0, column=7, padx=4)
+        self.pitch_lbl = ttk.Label(opts, width=7)
+        self.pitch_lbl.grid(row=0, column=8)
+        self.pitch_var.trace_add("write", lambda *_: self.pitch_lbl.config(text=f"{self.pitch_var.get():+.0f} st"))
+        self.pitch_lbl.config(text="+0 st")
         ttk.Label(opts, text="Cat legato").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.legato_var = tk.StringVar(value=LEGATO_CHOICES[0])
         ttk.Combobox(opts, textvariable=self.legato_var, values=LEGATO_CHOICES, state="readonly", width=24).grid(
@@ -331,6 +339,7 @@ class App:
         return dict(
             exaggeration=round(self.exag_var.get(), 2),
             cfg_weight=round(self.cfg_var.get(), 2),
+            pitch=round(self.pitch_var.get()),
             legato=LEGATO_PRESETS[self.legato_var.get()],
             accent=None if accent == "Off" else accent.lower(),
             thesaurus=self.thesaurus_var.get(),
@@ -350,6 +359,7 @@ class App:
         self.cat_clip_var.set(False)  # its reference was already cut down when it was saved
         self.exag_var.set(s["exaggeration"])
         self.cfg_var.set(s["cfg_weight"])
+        self.pitch_var.set(s["pitch"])
         self.legato_var.set(next(k for k, v in LEGATO_PRESETS.items() if v == s["legato"]))
         self.accent_var.set((s["accent"] or "off").capitalize())
         self.thesaurus_var.set(s["thesaurus"])

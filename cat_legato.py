@@ -101,6 +101,21 @@ def _syllable_bounds(energy_db, start, end, min_frames):
     return [start + c for c in cuts]
 
 
+def shift_pitch(audio, sample_rate, semitones):
+    """Raise (or lower, if negative) the voice by semitones, keeping its timbre."""
+    import pyworld as pw
+
+    x = np.asarray(audio, dtype=np.float64).reshape(-1)
+    if not len(x) or not semitones:
+        return np.asarray(audio, dtype=np.float32)
+    f0, t = pw.harvest(x, sample_rate, f0_floor=60.0, f0_ceil=1000.0, frame_period=FRAME_MS)
+    sp = pw.cheaptrick(x, f0, t, sample_rate)
+    ap = pw.d4c(x, f0, t, sample_rate)
+    y = pw.synthesize(f0 * 2.0 ** (semitones / 12.0), sp, ap, sample_rate, frame_period=FRAME_MS)[: len(x)]
+    peak = np.abs(y).max()
+    return (y * min(1.0, np.abs(x).max() / peak) if peak > 0 else y).astype(np.float32)
+
+
 def legato(audio, sample_rate, pitch=0.0, formant=1.0, flatten=0.3, fall=1.5, hum=0.5,
            bridge=0.04, floor=22.0, stretch=1.0, slur=0.0, purr=0.0, trill=0.0,
            chirp=0.0, break_len=0.22):
