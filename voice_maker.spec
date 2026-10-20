@@ -24,7 +24,11 @@ for dist in [
     except Exception:
         print(f"no metadata for {dist}")
 
-hiddenimports += ["pkg_resources", "tkinter", "chatterbox_harness", "cat_legato", "cat_accent", "cat_thesaurus", "voices", "voice_pack"]
+hiddenimports += ["pkg_resources", "tkinter", "chatterbox_harness", "cat_legato", "cat_accent", "cat_thesaurus", "voices", "voice_pack",
+                  "intelligibility", "voice_tune"]
+# The speech-to-text check loads Whisper through transformers' lazy imports.
+from PyInstaller.utils.hooks import collect_submodules
+hiddenimports += collect_submodules("transformers.models.whisper")
 
 ffmpeg = os.environ.get("FFMPEG_BIN")
 if ffmpeg:

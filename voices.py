@@ -25,7 +25,9 @@ from chatterbox_harness import DATA_DIR, clean_clip, keep_loudest_parts, run_ffm
 VOICES_DIR = os.path.join(DATA_DIR, "voices")
 
 DEFAULT_SETTINGS = dict(gender=None, exaggeration=0.5, cfg_weight=0.5, pitch=0.0, seed=None, legato=None, accent=None, thesaurus=False,
-                        purr=0.0, trill=0.0, chirp=0.0)
+                        purr=0.0, trill=0.0, chirp=0.0, tries=1, legato_params=None)
+# tries: takes made of each sentence, keeping the clearest (see intelligibility.py).
+# legato_params: other cat_legato.legato settings over the preset's, e.g. {"hum": 0.4, "slur": 0}.
 # What worked best with a cat's voice: yowls only, Meow, all three cat sounds, Medium accent.
 GENDERS = ("male", "female")
 CAT_CLIP_SETTINGS = dict(legato="meow", accent="medium", purr=0.8, trill=0.3, chirp=0.25)
@@ -107,8 +109,18 @@ def speak_kwargs(settings):
         legato=settings["legato"],
         accent=settings["accent"],
         thesaurus=settings["thesaurus"],
-        cat_sounds={k: settings[k] for k in ("purr", "trill", "chirp")},
+        cat_sounds={**{k: settings[k] for k in ("purr", "trill", "chirp")}, **(settings["legato_params"] or {})},
+        tries=settings["tries"],
     )
+
+
+def cat_text(text, settings):
+    """The words a voice with these settings means to say (after the thesaurus, if it's on)."""
+    if settings.get("thesaurus"):
+        from cat_thesaurus import cat_words
+
+        return cat_words(text)
+    return text
 
 
 def speak_as(cloner, voice, text, mp3_path, **extra):
@@ -150,7 +162,11 @@ def main(argv, download=None):
     add.add_argument("--raw", action="store_true", help="skip the clean-up pass (declip, denoise, even loudness)")
     for key, value in DEFAULT_SETTINGS.items():
         flag = "--" + key.replace("_", "-")
-        if key == "gender":
+        if key == "legato_params":
+            continue
+        if key == "tries":
+            add.add_argument(flag, type=int, help="takes per sentence, keeping the clearest")
+        elif key == "gender":
             add.add_argument(flag, choices=GENDERS, help="for a game picking voices to match a character")
         elif key in ("legato", "accent"):
             add.add_argument(flag)
@@ -167,6 +183,15 @@ def main(argv, download=None):
     gender = vsub.add_parser("gender", help="mark a saved voice male or female")
     gender.add_argument("name")
     gender.add_argument("gender", choices=GENDERS)
+    tune = vsub.add_parser("tune", help="find settings that keep the hum but say clear words, and save them")
+    tune.add_argument("names", nargs="*", metavar="NAME")
+    tune.add_argument("--all", action="store_true", help="tune every saved voice")
+    tune.add_argument("--out-dir", help="save the winning takes and a report here")
+    tune.add_argument("--lines", nargs="+", metavar="TEXT", help="test lines (default: three game lines)")
+    tune.add_argument("--seeds", type=int, default=2, help="seeds tried per candidate (default 2)")
+    tune.add_argument("--candidates", type=int, help="only try the first N candidates")
+    tune.add_argument("--dry-run", action="store_true", help="report only, don't change the voice")
+    tune.add_argument("--device", choices=["cuda", "mps", "cpu"])
     pack = sub.add_parser("pack", help="every game line in every saved voice at several pitches, plus a manifest")
     pack.add_argument("lines", help="CSV with id,text columns, or a text file with one line per row")
     pack.add_argument("--out-dir", required=True)
@@ -198,6 +223,21 @@ def main(argv, download=None):
         chosen = [get_voice(n) for n in args.voices] if args.voices else None
         paths = render_all(VoiceCloner(device=args.device), args.text, args.out_dir, chosen)
         print("\n".join(f"Saved {p}" for p in paths))
+    elif args.action == "tune":
+        import voice_tune
+
+        if not args.names and not args.all:
+            parser.error("name a voice to tune, or use --all")
+        chosen = list_voices() if args.all else [get_voice(n) for n in args.names]
+        cloner = VoiceCloner(device=args.device)
+        summary = []
+        for v in chosen:
+            print(f"Tuning {v['name']}…")
+            label, _, seed, score, _ = voice_tune.tune(
+                cloner, v, args.out_dir, args.lines or voice_tune.TEST_LINES, args.seeds,
+                voice_tune.CANDIDATES[: args.candidates] if args.candidates else None, save=not args.dry_run)
+            summary.append(f"{v['name']}: {label}, seed {seed}, {score:.0%} understood")
+        print("\n".join(summary))
     elif args.action == "list":
         for v in list_voices():
             print(f"{v['name']}: {v['source']}  {v['settings']}")

@@ -78,6 +78,13 @@ jobs:
           Run-App @('pack','lines.csv','--device','cpu','--out-dir','pack','--voices','Smoke','--pitches','0','4') 30
           Show-Log "Voice pack log"
           if (-not (Test-Path pack\smoke\+4\shop_greet_01.ogg) -or -not (Test-Path pack\manifest.json)) { throw "Voice pack smoke test produced no OGG/manifest" }
+          Run-App @('say','--device','cpu','--voice','Smoke','--tries','2','--out','smoke_tries.mp3','"Hello there."') 30
+          Show-Log "Best of two takes log"
+          if (-not (Test-Path smoke_tries.mp3)) { throw "Best-of-takes smoke test produced no MP3" }
+          Run-App @('voice','tune','Smoke','--device','cpu','--seeds','1','--candidates','2','--lines','"Hello there."','--out-dir','tune') 30
+          Show-Log "Voice tune log"
+          if (-not (Test-Path tune\smoke\report.txt)) { throw "Voice tune smoke test produced no report" }
+          Write-Host "::notice title=Voice tune report::$((Get-Content tune\smoke\report.txt) -join '%0A')"
 
       - name: Upload smoke test audio
         if: matrix.edition == 'cpu'
@@ -88,6 +95,8 @@ jobs:
             smoke.mp3
             smoke_meow.mp3
             smoke_voice.mp3
+            smoke_tries.mp3
+            tune
             yt.wav
           if-no-files-found: ignore
 

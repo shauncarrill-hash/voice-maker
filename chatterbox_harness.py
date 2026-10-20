@@ -33,6 +33,7 @@ MODEL_FILES = ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tok
 # Chatterbox stops after ~1000 speech tokens (about 40 s), so long text is spoken in chunks.
 MAX_CHUNK_CHARS = 250
 CHUNK_GAP_SECONDS = 0.25
+GOOD_ENOUGH = 0.95  # with tries, stop making takes once one scores this (see intelligibility.py)
 
 
 def model_is_downloaded(model_dir=MODEL_DIR):
@@ -301,11 +302,13 @@ class VoiceCloner:
         return self.speak_variants(text, [pitch], **kwargs)[pitch]
 
     def speak_variants(self, text, pitches, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None,
-                       cat_sounds=None, accent=None, end_at_words=True, thesaurus=False, seed=None):
+                       cat_sounds=None, accent=None, end_at_words=True, thesaurus=False, seed=None, tries=1,
+                       judge=None):
         """Say text once and return {pitch: waveform} for each pitch, so the variants match word for word.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
-        cat_sounds: optional {"purr": 0..1, "trill": 0..1, "chirp": 0..1} added on top of the preset.
+        cat_sounds: optional {"purr": 0..1, "trill": 0..1, "chirp": 0..1} added on top of the preset
+        (any other cat_legato.legato setting, such as hum or slur, can go in here too).
         accent: None, or a cat_accent strength ("light", "medium", "strong") to respell the text with first
         ("river" -> "rriwerr").
         end_at_words: stop at the last spoken word, cutting any trailing babble or echo.
@@ -313,6 +316,8 @@ class VoiceCloner:
         pitches: semitones to raise the voice (negative lowers it), on top of the legato preset's own.
         seed: makes the take repeatable: the same text, settings and seed give the same audio.
         None picks a random one; either way the seed used is in self.last_seed.
+        tries: takes to make of each sentence, keeping the one judge (an intelligibility.Judge, made
+        when needed) understands best. self.last_score is the average score of the kept takes.
         """
         if not seed:
             seed = random.randrange(1, 1_000_000)
@@ -325,11 +330,6 @@ class VoiceCloner:
             if swapped != text:
                 self.log(f"Cat thesaurus: {swapped}")
             text = swapped
-        if accent:
-            from cat_accent import cat_accent
-
-            text = cat_accent(text, accent)
-            self.log(f"Cat accent: {text}")
         if cat_sounds and any(cat_sounds.values()) and not legato:
             legato = "legato"
         if self._reference is None:
@@ -340,46 +340,75 @@ class VoiceCloner:
             from cat_legato import PRESETS, legato as hum_through
 
             settings = {**PRESETS[legato], **(cat_sounds or {})}
-            # One sentence at a time so the pauses between sentences survive the effect
-            # ("..." from the cat accent stays inside its sentence).
+            # One sentence at a time so the pauses between sentences survive the effect.
             chunks = [piece for sentence in re.split(r"(?<=[^.][.!?])\s+", text) for piece in split_text(sentence)]
         else:
             chunks = split_text(text)
+        if not chunks:
+            raise ValueError("Nothing to say: the text is empty.")
+        if tries > 1 and judge is None:
+            from intelligibility import Judge
+
+            judge = self.judge = getattr(self, "judge", None) or Judge(device=self.device, log=self.log)
+        # The take is judged at the pitch nearest the voice's own.
+        judged_pitch = min(pitches, key=abs)
+
+        def render(wav, pitch):
+            if legato:
+                return hum_through(wav, self.sample_rate, **{**settings, "pitch": settings["pitch"] + pitch})
+            if pitch:
+                from cat_legato import shift_pitch
+
+                return shift_pitch(wav, self.sample_rate, pitch)
+            return wav
+
         parts = {p: [] for p in pitches}
+        scores = []
         gap = np.zeros(int(self.sample_rate * CHUNK_GAP_SECONDS), dtype=np.float32)
         for n, chunk in enumerate(chunks):
-            # Seeded per chunk, so each sentence of a longer text repeats too.
-            random.seed(seed + n)
-            np.random.seed((seed + n) % 2**32)
-            torch.manual_seed(seed + n)
-            with torch.inference_mode():
-                wav = self.model.generate(
-                    chunk,
-                    exaggeration=exaggeration,
-                    cfg_weight=cfg_weight,
-                    temperature=temperature,
-                )
-            wav = wav.squeeze().cpu().numpy().astype(np.float32)
-            if end_at_words:
-                trimmed = end_at_last_word(wav, self.sample_rate, chunk)
-                if len(wav) - len(trimmed) > self.sample_rate // 2:
-                    self.log(f"Cut {(len(wav) - len(trimmed)) / self.sample_rate:.1f} s of trailing babble")
-                wav = trimmed
-            for pitch in pitches:
-                if legato:
-                    self.log("Applying cat legato…")
-                    out = hum_through(wav, self.sample_rate, **{**settings, "pitch": settings["pitch"] + pitch})
-                elif pitch:
-                    from cat_legato import shift_pitch
+            spoken = chunk
+            if accent:
+                from cat_accent import cat_accent
 
-                    out = shift_pitch(wav, self.sample_rate, pitch)
-                else:
-                    out = wav
+                spoken = cat_accent(chunk, accent)
+                self.log(f"Cat accent: {spoken}")
+            best = None
+            for k in range(max(1, tries)):
+                # Seeded per chunk and try, so each sentence of a longer text repeats too.
+                s = seed + n + 7919 * k
+                random.seed(s)
+                np.random.seed(s % 2**32)
+                torch.manual_seed(s)
+                with torch.inference_mode():
+                    wav = self.model.generate(spoken, exaggeration=exaggeration, cfg_weight=cfg_weight,
+                                              temperature=temperature)
+                wav = wav.squeeze().cpu().numpy().astype(np.float32)
+                if end_at_words:
+                    trimmed = end_at_last_word(wav, self.sample_rate, spoken)
+                    if len(wav) - len(trimmed) > self.sample_rate // 2:
+                        self.log(f"Cut {(len(wav) - len(trimmed)) / self.sample_rate:.1f} s of trailing babble")
+                    wav = trimmed
+                if tries <= 1:
+                    best = (None, wav, {})
+                    break
+                out = render(wav, judged_pitch)
+                score, heard = judge.score(out, self.sample_rate, chunk)
+                self.log(f"Take {k + 1}/{tries}: {score:.2f} heard {heard!r}")
+                if best is None or score > best[0]:
+                    best = (score, wav, {judged_pitch: out})
+                if score >= GOOD_ENOUGH:
+                    break
+            score, wav, done = best
+            if score is not None:
+                scores.append(score)
+            if legato:
+                self.log("Applying cat legato…")
+            for pitch in pitches:
+                out = done[pitch] if pitch in done else render(wav, pitch)
                 if parts[pitch]:
                     parts[pitch].append(gap)
                 parts[pitch].append(out)
-        if not chunks:
-            raise ValueError("Nothing to say: the text is empty.")
+        self.last_score = sum(scores) / len(scores) if scores else None
         return {p: np.concatenate(parts[p]) for p in pitches}
 
     def speak_to_mp3(self, text, mp3_path, **kwargs):
@@ -412,6 +441,8 @@ def main(argv=None):
                      help="swap words a cat would struggle with for easier synonyms (sleep -> doze)")
     say.add_argument("--pitch", type=float, help="semitones to raise the voice (negative lowers it)")
     say.add_argument("--seed", type=int, help="repeat a take: same text, settings and seed give the same audio")
+    say.add_argument("--tries", type=int,
+                     help="takes to make of each sentence, keeping the one a speech-to-text check understands best")
     say.add_argument("--keep-tail", action="store_true",
                      help="keep whatever Chatterbox says after the last word (by default it is cut)")
     args = parser.parse_args(argv)
@@ -422,7 +453,7 @@ def main(argv=None):
     import voices
 
     given = dict(exaggeration=args.exaggeration, cfg_weight=args.cfg_weight, legato=args.legato,
-                 accent=args.cat_accent, thesaurus=args.cat_words, pitch=args.pitch, seed=args.seed, purr=args.purr, trill=args.trill, chirp=args.chirp)
+                 accent=args.cat_accent, thesaurus=args.cat_words, pitch=args.pitch, seed=args.seed, tries=args.tries, purr=args.purr, trill=args.trill, chirp=args.chirp)
     settings = dict(voices.DEFAULT_SETTINGS)
     ref = args.ref
     if args.voice:
@@ -433,7 +464,8 @@ def main(argv=None):
     cloner = VoiceCloner(device=args.device, model_dir=args.model_dir)
     cloner.set_reference(ref, exaggeration=settings["exaggeration"], loud_parts_only=args.loud_parts_only)
     cloner.speak_to_mp3(args.text, args.out, end_at_words=not args.keep_tail, **voices.speak_kwargs(settings))
-    print(f"Saved {args.out} (seed {cloner.last_seed})")
+    score = f", understood {cloner.last_score:.0%}" if getattr(cloner, "last_score", None) is not None else ""
+    print(f"Saved {args.out} (seed {cloner.last_seed}{score})")
     return 0
 
 

@@ -200,6 +200,13 @@ class App:
         self.seed_var = tk.StringVar()
         ttk.Entry(opts, textvariable=self.seed_var, width=10).grid(row=1, column=7, sticky="w", padx=4, pady=(6, 0))
         ttk.Label(opts, text="empty = random").grid(row=1, column=8, sticky="w", pady=(6, 0))
+        ttk.Label(opts, text="Best of").grid(row=2, column=6, sticky="w", padx=(16, 0), pady=(4, 0))
+        self.tries_var = tk.IntVar(value=1)
+        ttk.Spinbox(opts, from_=1, to=8, textvariable=self.tries_var, width=4).grid(
+            row=2, column=7, sticky="w", padx=4, pady=(4, 0))
+        ttk.Label(opts, text="takes (keeps the clearest)").grid(row=2, column=8, sticky="w", pady=(4, 0))
+        self.legato_params = None  # extra hum settings of the chosen saved voice (from voice tune)
+        self.sound_amounts = {}
         ttk.Label(opts, text="Cat legato").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.legato_var = tk.StringVar(value=LEGATO_CHOICES[0])
         ttk.Combobox(opts, textvariable=self.legato_var, values=LEGATO_CHOICES, state="readonly", width=24).grid(
@@ -367,6 +374,10 @@ class App:
         if seed and not seed.isdigit():
             messagebox.showwarning("Voice Maker", "Seed must be a whole number, or empty for a random take.")
             return None
+        try:
+            tries = max(1, int(self.tries_var.get()))
+        except (tk.TclError, ValueError):
+            tries = 1
         return dict(
             seed=int(seed) if seed else None,
             gender=None if self.gender_var.get() == "-" else self.gender_var.get().lower(),
@@ -376,7 +387,10 @@ class App:
             legato=LEGATO_PRESETS[self.legato_var.get()],
             accent=None if accent == "Off" else accent.lower(),
             thesaurus=self.thesaurus_var.get(),
-            **{key: amount if self.sound_vars[key].get() else 0.0 for key, _, amount in CAT_SOUNDS},
+            tries=tries,
+            legato_params=self.legato_params,
+            **{key: (self.sound_amounts.get(key) or amount) if self.sound_vars[key].get() else 0.0
+               for key, _, amount in CAT_SOUNDS},
         )
 
     def refresh_voices(self, select=None):
@@ -399,6 +413,9 @@ class App:
         self.legato_var.set(next(k for k, v in LEGATO_PRESETS.items() if v == s["legato"]))
         self.accent_var.set((s["accent"] or "off").capitalize())
         self.thesaurus_var.set(s["thesaurus"])
+        self.tries_var.set(s["tries"])
+        self.legato_params = s["legato_params"]
+        self.sound_amounts = {key: s[key] for key in self.sound_vars}  # keep a tuned voice's softer amounts
         for key, var in self.sound_vars.items():
             var.set(s[key] > 0)
         self.ref_label.config(text=f"Voice: {voice['name']}  ({voice['source']})")
