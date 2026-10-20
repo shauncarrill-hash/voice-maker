@@ -135,6 +135,11 @@ class App:
         ttk.Button(step1, text="Use a local audio file instead…", command=self.on_pick_local).grid(row=2, column=1, columnspan=2, sticky="w", **pad)
         self.ref_label = ttk.Label(step1, text="No reference clip yet. 10 to 20 seconds of clean speech works best.")
         self.ref_label.grid(row=3, column=0, columnspan=4, sticky="w", **pad)
+        self.cat_clip_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            step1, text="Cat clip: use only the yowls, with Meow, all cat sounds and a Medium accent",
+            variable=self.cat_clip_var, command=self.on_cat_clip,
+        ).grid(row=4, column=0, columnspan=4, sticky="w", **pad)
         step1.columnconfigure(1, weight=1)
 
         # Step 2: phrases
@@ -271,6 +276,14 @@ class App:
 
         self.run_in_background(task)
 
+    def on_cat_clip(self):
+        """Ticking "Cat clip" also picks the settings that worked best with a cat's voice."""
+        if self.cat_clip_var.get():
+            self.legato_var.set("Meow")
+            for var in self.sound_vars.values():
+                var.set(True)
+            self.accent_var.set("Medium")
+
     def on_load_model(self):
         def task():
             self.cloner.load()
@@ -317,10 +330,11 @@ class App:
         accent = None if self.accent_var.get() == "Off" else self.accent_var.get().lower()
         cat_sounds = {key: amount if self.sound_vars[key].get() else 0.0 for key, _, amount in CAT_SOUNDS}
         reference = self.reference_wav
+        loud_parts_only = self.cat_clip_var.get()
 
         def task():
             os.makedirs(out_dir, exist_ok=True)
-            self.cloner.set_reference(reference, exaggeration=exaggeration)
+            self.cloner.set_reference(reference, exaggeration=exaggeration, loud_parts_only=loud_parts_only)
             for i, phrase in enumerate(phrases, 1):
                 self.set_status(f"Generating {i}/{len(phrases)}: {phrase[:50]}")
                 name = f"{i:02d}_{slugify(phrase)}.mp3"

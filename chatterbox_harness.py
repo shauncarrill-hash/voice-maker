@@ -123,6 +123,70 @@ def save_mp3(audio, sample_rate, mp3_path, bitrate="192k"):
     )
 
 
+def decode_audio(path, sample_rate=24000):
+    """Decode any audio file to mono float32 at sample_rate with ffmpeg."""
+    exe = ffmpeg_exe()
+    if not exe:
+        raise RuntimeError("ffmpeg was not found.")
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    out = subprocess.run(
+        [exe, "-loglevel", "error", "-i", path, "-f", "f32le", "-ac", "1", "-ar", str(sample_rate), "pipe:1"],
+        capture_output=True, check=True, creationflags=flags,
+    ).stdout
+    return np.frombuffer(out, dtype=np.float32)
+
+
+def keep_loudest_parts(wav_path, out_path, max_seconds=5.0, below_peak_db=15.0, gap_seconds=0.15,
+                       sample_rate=24000):
+    """Save only the loud stretches of a clip, joined by short gaps (at most max_seconds).
+
+    Made for animal clips: a cat's yowls with quiet humming in between. Chatterbox copies the
+    delivery of its reference, so the humming would otherwise come out as moaning.
+    """
+    import wave
+
+    audio = decode_audio(wav_path, sample_rate)
+    hop = sample_rate // 50  # 20 ms
+    frames = len(audio) // hop
+    if frames == 0:
+        raise ValueError("The reference clip is empty.")
+    rms = np.sqrt(np.mean(audio[: frames * hop].reshape(frames, hop) ** 2, axis=1) + 1e-12)
+    db = 20 * np.log10(rms)
+    smooth = np.convolve(db, np.ones(5) / 5, mode="same")
+    loud = smooth > smooth.max() - below_peak_db
+    # Group loud frames into stretches of at least 0.2 s, padded by 40 ms on each side.
+    parts, start = [], None
+    for i, on in enumerate(np.append(loud, False)):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            if i - start >= 10:
+                parts.append((max(0, (start - 2) * hop), min(len(audio), (i + 2) * hop)))
+            start = None
+    if not parts:
+        parts = [(0, len(audio))]
+    gap = np.zeros(int(gap_seconds * sample_rate), dtype=np.float32)
+    pieces, total = [], 0
+    limit = int(max_seconds * sample_rate)
+    for a, b in parts:
+        piece = audio[a:b][: limit - total]
+        if pieces:
+            pieces.append(gap)
+        pieces.append(piece)
+        total += len(piece) + len(gap)
+        if total >= limit:
+            break
+    out = np.concatenate(pieces)
+    out = out / (np.max(np.abs(out)) or 1.0) * 0.9
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with wave.open(out_path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes((out * 32767).astype("<i2").tobytes())
+    return out_path
+
+
 class VoiceCloner:
     """Loads Chatterbox once and speaks text in the voice of a reference clip."""
 
@@ -150,11 +214,17 @@ class VoiceCloner:
         self.model = ChatterboxTTS.from_local(self.model_dir, self.device)
         self.log("Chatterbox loaded.")
 
-    def set_reference(self, wav_path, exaggeration=0.5):
-        """Analyse the reference clip once; later phrases reuse the result."""
+    def set_reference(self, wav_path, exaggeration=0.5, loud_parts_only=False):
+        """Analyse the reference clip once; later phrases reuse the result.
+
+        loud_parts_only: use only the clip's loudest stretches (a cat's yowls) as the voice.
+        """
         self.load()
-        key = (os.path.abspath(wav_path), os.path.getmtime(wav_path))
+        key = (os.path.abspath(wav_path), os.path.getmtime(wav_path), loud_parts_only)
         if key != self._reference:
+            if loud_parts_only:
+                self.log("Keeping only the loudest parts of the reference…")
+                wav_path = keep_loudest_parts(wav_path, os.path.join(DATA_DIR, "work", "reference_loud.wav"))
             self.log("Analysing reference voice…")
             self.model.prepare_conditionals(wav_path, exaggeration=exaggeration)
             self._reference = key
@@ -226,6 +296,8 @@ def main(argv=None):
     say.add_argument("--model-dir", default=MODEL_DIR)
     say.add_argument("--exaggeration", type=float, default=0.5)
     say.add_argument("--cfg-weight", type=float, default=0.5)
+    say.add_argument("--loud-parts-only", action="store_true",
+                     help="use only the reference's loudest stretches, e.g. a cat's yowls without the humming")
     say.add_argument("--legato", choices=["legato", "meow", "kitten"], help="hum through word gaps (cat voice)")
     say.add_argument("--cat-accent", nargs="?", const="medium", choices=["light", "medium", "strong"],
                      help="respell the text the way a cat would say it (default strength: medium)")
@@ -237,7 +309,7 @@ def main(argv=None):
         download_model()
         return 0
     cloner = VoiceCloner(device=args.device, model_dir=args.model_dir)
-    cloner.set_reference(args.ref, exaggeration=args.exaggeration)
+    cloner.set_reference(args.ref, exaggeration=args.exaggeration, loud_parts_only=args.loud_parts_only)
     cloner.speak_to_mp3(args.text, args.out, exaggeration=args.exaggeration, cfg_weight=args.cfg_weight,
                         legato=args.legato, cat_sounds={"purr": args.purr, "trill": args.trill, "chirp": args.chirp},
                         accent=args.cat_accent)
