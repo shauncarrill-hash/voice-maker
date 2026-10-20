@@ -248,6 +248,7 @@ def _cat_sounds(f0, ap, syllables, fps, purr, trill, chirp):
     flutter = np.full(n, 0.2 * purr)
     rng = np.random.default_rng(n)  # same input, same result
     for s0, s1, last in syllables:
+        s0, s1 = min(s0, n), min(s1, n)  # rounding after the vowel stretch can overshoot by a frame
         length = s1 - s0
         if length < 4:
             continue
