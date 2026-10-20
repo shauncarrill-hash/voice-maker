@@ -55,6 +55,8 @@ With an NVIDIA GPU each phrase takes a few seconds. On CPU it works but expect t
 
 **Pitch:** the slider raises or lowers the voice in semitones (−12 to +12), keeping its timbre. It adds to the Meow and Kitten presets' own pitch and works with Cat legato off too. On the command line it's `--pitch 3` (or `--pitch -4`), and each saved voice remembers it.
 
+**Seed:** Chatterbox makes every take a little different. Each MP3's name ends with the seed it used (`01_hello_there_seed48213.mp3`); type that number in the Seed box to get the same take again, and save or update a voice with it so the voice always uses it. Empty means a new random take each time. The same seed, phrase and settings give the same audio on the same computer; with a different phrase the seed keeps the delivery steadier but can't make it identical. On the command line it's `--seed 48213`.
+
 **Easier words:** a small cat thesaurus swaps words a cat's mouth would struggle with (lots of p, b, f, v or th) for plain synonyms it can say, before the accent is applied: "Please sleep before the battle, my friends" becomes "Kindly doze before the war, my mates". Only words in its list change, and only for synonyms that fit wherever the word does. Preview with `python cat_thesaurus.py "your text"`, or add `--cat-words` on the command line.
 
 **Stop at the last word** (on by default): Chatterbox sometimes keeps going after the text is done, pausing and then murmuring an echo of the last word. With this ticked, each line ends at its last word with a short fade. A long pause only counts as the end once the line has had time to be said, so pauses in the middle (such as "...") are kept. Untick it, or add `--keep-tail` on the command line, to keep everything.

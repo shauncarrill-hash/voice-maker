@@ -7,6 +7,7 @@ Flow:
 
 import os
 import queue
+import random
 import re
 import shutil
 import subprocess
@@ -180,6 +181,10 @@ class App:
         self.pitch_lbl.grid(row=0, column=8)
         self.pitch_var.trace_add("write", lambda *_: self.pitch_lbl.config(text=f"{self.pitch_var.get():+.0f} st"))
         self.pitch_lbl.config(text="+0 st")
+        ttk.Label(opts, text="Seed").grid(row=1, column=6, sticky="w", padx=(16, 0), pady=(6, 0))
+        self.seed_var = tk.StringVar()
+        ttk.Entry(opts, textvariable=self.seed_var, width=10).grid(row=1, column=7, sticky="w", padx=4, pady=(6, 0))
+        ttk.Label(opts, text="empty = random").grid(row=1, column=8, sticky="w", pady=(6, 0))
         ttk.Label(opts, text="Cat legato").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.legato_var = tk.StringVar(value=LEGATO_CHOICES[0])
         ttk.Combobox(opts, textvariable=self.legato_var, values=LEGATO_CHOICES, state="readonly", width=24).grid(
@@ -336,7 +341,12 @@ class App:
     # ---- saved voices --------------------------------------------------
     def current_settings(self):
         accent = self.accent_var.get()
+        seed = self.seed_var.get().strip()
+        if seed and not seed.isdigit():
+            messagebox.showwarning("Voice Maker", "Seed must be a whole number, or empty for a random take.")
+            return None
         return dict(
+            seed=int(seed) if seed else None,
             exaggeration=round(self.exag_var.get(), 2),
             cfg_weight=round(self.cfg_var.get(), 2),
             pitch=round(self.pitch_var.get()),
@@ -360,6 +370,7 @@ class App:
         self.exag_var.set(s["exaggeration"])
         self.cfg_var.set(s["cfg_weight"])
         self.pitch_var.set(s["pitch"])
+        self.seed_var.set(str(s["seed"] or ""))
         self.legato_var.set(next(k for k, v in LEGATO_PRESETS.items() if v == s["legato"]))
         self.accent_var.set((s["accent"] or "off").capitalize())
         self.thesaurus_var.set(s["thesaurus"])
@@ -376,6 +387,8 @@ class App:
             return
         name = name.strip()
         clip, cat_clip, settings = self.reference_wav, self.cat_clip_var.get(), self.current_settings()
+        if settings is None:
+            return
         url = self.url_var.get().strip()
         source = f"{url} {self.start_var.get()}-{self.end_var.get()}" if clip == os.path.join(WORK_DIR, "reference.wav") and url else None
 
@@ -391,7 +404,10 @@ class App:
         if not self.voice_var.get():
             messagebox.showwarning("Voice Maker", "Pick a saved voice first.")
             return
-        voices.update_settings(self.voice_var.get(), **self.current_settings())
+        settings = self.current_settings()
+        if settings is None:
+            return
+        voices.update_settings(self.voice_var.get(), **settings)
         self.set_status(f"{self.voice_var.get()} will use these settings from now on.")
 
     def on_generate_all(self):
@@ -412,8 +428,10 @@ class App:
                 os.makedirs(folder, exist_ok=True)
                 for i, phrase in enumerate(phrases, 1):
                     self.set_status(f"{voice['name']} {i}/{len(phrases)}: {phrase[:50]}")
-                    voices.speak_as(self.cloner, voice, phrase, unused_path(os.path.join(folder, f"{i:02d}_{slugify(phrase)}.mp3")),
-                                    end_at_words=end_at_words)
+                    seed = voice["settings"]["seed"] or random.randrange(1, 1_000_000)
+                    voices.speak_as(self.cloner, voice, phrase,
+                                    unused_path(os.path.join(folder, f"{i:02d}_{slugify(phrase)}_seed{seed}.mp3")),
+                                    end_at_words=end_at_words, seed=seed)
             self.set_status(f"Done. One folder per voice in {out_dir}")
 
         self.run_in_background(task)
@@ -446,6 +464,8 @@ class App:
             return
         out_dir = self.out_var.get().strip() or DEFAULT_OUT_DIR
         settings = self.current_settings()
+        if settings is None:
+            return
         reference = self.reference_wav
         end_at_words = self.stop_var.get()
         loud_parts_only = self.cat_clip_var.get()
@@ -455,9 +475,10 @@ class App:
             self.cloner.set_reference(reference, exaggeration=settings["exaggeration"], loud_parts_only=loud_parts_only)
             for i, phrase in enumerate(phrases, 1):
                 self.set_status(f"Generating {i}/{len(phrases)}: {phrase[:50]}")
-                name = f"{i:02d}_{slugify(phrase)}.mp3"
+                seed = settings["seed"] or random.randrange(1, 1_000_000)
+                name = f"{i:02d}_{slugify(phrase)}_seed{seed}.mp3"
                 self.cloner.speak_to_mp3(phrase, unused_path(os.path.join(out_dir, name)), end_at_words=end_at_words,
-                                         **voices.speak_kwargs(settings))
+                                         **{**voices.speak_kwargs(settings), "seed": seed})
             self.set_status(f"Done. Saved {len(phrases)} MP3 file(s) to {out_dir}")
 
         self.run_in_background(task)

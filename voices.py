@@ -15,6 +15,7 @@ Command line (through voice_maker.py or VoiceMaker.exe):
 import argparse
 import json
 import os
+import random
 import re
 import shutil
 import tempfile
@@ -23,7 +24,7 @@ from chatterbox_harness import DATA_DIR, keep_loudest_parts, run_ffmpeg, unused_
 
 VOICES_DIR = os.path.join(DATA_DIR, "voices")
 
-DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, pitch=0.0, legato=None, accent=None, thesaurus=False,
+DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, pitch=0.0, seed=None, legato=None, accent=None, thesaurus=False,
                         purr=0.0, trill=0.0, chirp=0.0)
 # What worked best with a cat's voice: yowls only, Meow, all three cat sounds, Medium accent.
 CAT_CLIP_SETTINGS = dict(legato="meow", accent="medium", purr=0.8, trill=0.3, chirp=0.25)
@@ -111,6 +112,7 @@ def speak_kwargs(settings):
         exaggeration=settings["exaggeration"],
         cfg_weight=settings["cfg_weight"],
         pitch=settings["pitch"],
+        seed=settings["seed"],
         legato=settings["legato"],
         accent=settings["accent"],
         thesaurus=settings["thesaurus"],
@@ -121,7 +123,7 @@ def speak_kwargs(settings):
 def speak_as(cloner, voice, text, mp3_path, **extra):
     """Speak text in a saved voice with its remembered settings (extra: more speak() arguments)."""
     cloner.set_reference(voice["reference"], exaggeration=voice["settings"]["exaggeration"])
-    return cloner.speak_to_mp3(text, mp3_path, **speak_kwargs(voice["settings"]), **extra)
+    return cloner.speak_to_mp3(text, mp3_path, **{**speak_kwargs(voice["settings"]), **extra})
 
 
 def render_all(cloner, text, out_dir, voices=None, log=print):
@@ -133,7 +135,9 @@ def render_all(cloner, text, out_dir, voices=None, log=print):
     paths = []
     for voice in voices:
         log(f"Speaking as {voice['name']}…")
-        paths.append(speak_as(cloner, voice, text, unused_path(os.path.join(out_dir, slugify(voice["name"]) + ".mp3"))))
+        seed = voice["settings"]["seed"] or random.randrange(1, 1_000_000)
+        path = unused_path(os.path.join(out_dir, f"{slugify(voice['name'])}_seed{seed}.mp3"))
+        paths.append(speak_as(cloner, voice, text, path, seed=seed))
     return paths
 
 
@@ -156,6 +160,8 @@ def main(argv, download=None):
         flag = "--" + key.replace("_", "-")
         if key in ("legato", "accent"):
             add.add_argument(flag)
+        elif key == "seed":
+            add.add_argument(flag, type=int, help="repeat takes: the seed of a take you liked")
         elif key == "thesaurus":
             add.add_argument("--cat-words", dest="thesaurus", action="store_const", const=True,
                              help="swap hard-to-say words for easier synonyms")

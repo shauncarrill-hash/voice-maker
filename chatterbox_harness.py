@@ -11,6 +11,7 @@ Command line use (handy for testing without the GUI):
 
 import argparse
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -274,7 +275,7 @@ class VoiceCloner:
             self._reference = key
 
     def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None, cat_sounds=None,
-              accent=None, end_at_words=True, thesaurus=False, pitch=0.0):
+              accent=None, end_at_words=True, thesaurus=False, pitch=0.0, seed=None):
         """Return a mono float32 waveform at self.sample_rate for text.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
@@ -284,7 +285,13 @@ class VoiceCloner:
         end_at_words: stop at the last spoken word, cutting any trailing babble or echo.
         thesaurus: swap hard-to-say words for easier synonyms first ("sleep" -> "doze").
         pitch: semitones to raise the voice (negative lowers it), on top of the legato preset's own.
+        seed: makes the take repeatable: the same text, settings and seed give the same audio.
+        None picks a random one; either way the seed used is in self.last_seed.
         """
+        if not seed:
+            seed = random.randrange(1, 1_000_000)
+        self.last_seed = seed
+        self.log(f"Seed: {seed}")
         if thesaurus:
             from cat_thesaurus import cat_words
 
@@ -315,7 +322,11 @@ class VoiceCloner:
             chunks = split_text(text)
         parts = []
         gap = np.zeros(int(self.sample_rate * CHUNK_GAP_SECONDS), dtype=np.float32)
-        for chunk in chunks:
+        for n, chunk in enumerate(chunks):
+            # Seeded per chunk, so each sentence of a longer text repeats too.
+            random.seed(seed + n)
+            np.random.seed((seed + n) % 2**32)
+            torch.manual_seed(seed + n)
             with torch.inference_mode():
                 wav = self.model.generate(
                     chunk,
@@ -372,6 +383,7 @@ def main(argv=None):
     say.add_argument("--cat-words", action="store_const", const=True,
                      help="swap words a cat would struggle with for easier synonyms (sleep -> doze)")
     say.add_argument("--pitch", type=float, help="semitones to raise the voice (negative lowers it)")
+    say.add_argument("--seed", type=int, help="repeat a take: same text, settings and seed give the same audio")
     say.add_argument("--keep-tail", action="store_true",
                      help="keep whatever Chatterbox says after the last word (by default it is cut)")
     args = parser.parse_args(argv)
@@ -382,7 +394,7 @@ def main(argv=None):
     import voices
 
     given = dict(exaggeration=args.exaggeration, cfg_weight=args.cfg_weight, legato=args.legato,
-                 accent=args.cat_accent, thesaurus=args.cat_words, pitch=args.pitch, purr=args.purr, trill=args.trill, chirp=args.chirp)
+                 accent=args.cat_accent, thesaurus=args.cat_words, pitch=args.pitch, seed=args.seed, purr=args.purr, trill=args.trill, chirp=args.chirp)
     settings = dict(voices.DEFAULT_SETTINGS)
     ref = args.ref
     if args.voice:
@@ -393,7 +405,7 @@ def main(argv=None):
     cloner = VoiceCloner(device=args.device, model_dir=args.model_dir)
     cloner.set_reference(ref, exaggeration=settings["exaggeration"], loud_parts_only=args.loud_parts_only)
     cloner.speak_to_mp3(args.text, args.out, end_at_words=not args.keep_tail, **voices.speak_kwargs(settings))
-    print(f"Saved {args.out}")
+    print(f"Saved {args.out} (seed {cloner.last_seed})")
     return 0
 
 
