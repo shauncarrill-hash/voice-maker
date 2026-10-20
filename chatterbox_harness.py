@@ -109,19 +109,25 @@ def run_ffmpeg(args, input=None):
         raise RuntimeError("ffmpeg failed:\n" + result.stderr.decode(errors="replace")[-1500:])
 
 
-def save_mp3(audio, sample_rate, mp3_path, bitrate="192k"):
-    """Write a mono float waveform (-1..1) to an MP3 using ffmpeg."""
+# Encoder arguments by file extension (OGG Vorbis is what Godot imports best).
+CODECS = {".mp3": ["-codec:a", "libmp3lame", "-b:a", "192k"], ".ogg": ["-codec:a", "libvorbis", "-q:a", "6"],
+          ".wav": ["-codec:a", "pcm_s16le"]}
+
+
+def save_audio(audio, sample_rate, path):
+    """Write a mono float waveform (-1..1) to an .mp3, .ogg or .wav file using ffmpeg."""
     audio = np.asarray(audio, dtype=np.float32).reshape(-1)
     pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()
-    os.makedirs(os.path.dirname(os.path.abspath(mp3_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     run_ffmpeg(
-        [
-            "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
-            "-codec:a", "libmp3lame", "-b:a", bitrate,
-            mp3_path,
-        ],
+        ["-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
+         *CODECS[os.path.splitext(path)[1].lower()], path],
         input=pcm,
     )
+
+
+def save_mp3(audio, sample_rate, mp3_path):
+    save_audio(audio, sample_rate, mp3_path)
 
 
 def decode_audio(path, sample_rate=24000):
@@ -290,9 +296,13 @@ class VoiceCloner:
             self.model.prepare_conditionals(wav_path, exaggeration=exaggeration)
             self._reference = key
 
-    def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None, cat_sounds=None,
-              accent=None, end_at_words=True, thesaurus=False, pitch=0.0, seed=None):
-        """Return a mono float32 waveform at self.sample_rate for text.
+    def speak(self, text, pitch=0.0, **kwargs):
+        """Return a mono float32 waveform at self.sample_rate for text. See speak_variants for the options."""
+        return self.speak_variants(text, [pitch], **kwargs)[pitch]
+
+    def speak_variants(self, text, pitches, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None,
+                       cat_sounds=None, accent=None, end_at_words=True, thesaurus=False, seed=None):
+        """Say text once and return {pitch: waveform} for each pitch, so the variants match word for word.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
         cat_sounds: optional {"purr": 0..1, "trill": 0..1, "chirp": 0..1} added on top of the preset.
@@ -300,7 +310,7 @@ class VoiceCloner:
         ("river" -> "rriwerr").
         end_at_words: stop at the last spoken word, cutting any trailing babble or echo.
         thesaurus: swap hard-to-say words for easier synonyms first ("sleep" -> "doze").
-        pitch: semitones to raise the voice (negative lowers it), on top of the legato preset's own.
+        pitches: semitones to raise the voice (negative lowers it), on top of the legato preset's own.
         seed: makes the take repeatable: the same text, settings and seed give the same audio.
         None picks a random one; either way the seed used is in self.last_seed.
         """
@@ -330,13 +340,12 @@ class VoiceCloner:
             from cat_legato import PRESETS, legato as hum_through
 
             settings = {**PRESETS[legato], **(cat_sounds or {})}
-            settings["pitch"] += pitch
             # One sentence at a time so the pauses between sentences survive the effect
             # ("..." from the cat accent stays inside its sentence).
             chunks = [piece for sentence in re.split(r"(?<=[^.][.!?])\s+", text) for piece in split_text(sentence)]
         else:
             chunks = split_text(text)
-        parts = []
+        parts = {p: [] for p in pitches}
         gap = np.zeros(int(self.sample_rate * CHUNK_GAP_SECONDS), dtype=np.float32)
         for n, chunk in enumerate(chunks):
             # Seeded per chunk, so each sentence of a longer text repeats too.
@@ -356,19 +365,22 @@ class VoiceCloner:
                 if len(wav) - len(trimmed) > self.sample_rate // 2:
                     self.log(f"Cut {(len(wav) - len(trimmed)) / self.sample_rate:.1f} s of trailing babble")
                 wav = trimmed
-            if legato:
-                self.log("Applying cat legato…")
-                wav = hum_through(wav, self.sample_rate, **settings)
-            elif pitch:
-                from cat_legato import shift_pitch
+            for pitch in pitches:
+                if legato:
+                    self.log("Applying cat legato…")
+                    out = hum_through(wav, self.sample_rate, **{**settings, "pitch": settings["pitch"] + pitch})
+                elif pitch:
+                    from cat_legato import shift_pitch
 
-                wav = shift_pitch(wav, self.sample_rate, pitch)
-            if parts:
-                parts.append(gap)
-            parts.append(wav)
-        if not parts:
+                    out = shift_pitch(wav, self.sample_rate, pitch)
+                else:
+                    out = wav
+                if parts[pitch]:
+                    parts[pitch].append(gap)
+                parts[pitch].append(out)
+        if not chunks:
             raise ValueError("Nothing to say: the text is empty.")
-        return np.concatenate(parts)
+        return {p: np.concatenate(parts[p]) for p in pitches}
 
     def speak_to_mp3(self, text, mp3_path, **kwargs):
         save_mp3(self.speak(text, **kwargs), self.sample_rate, mp3_path)

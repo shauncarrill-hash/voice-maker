@@ -163,6 +163,10 @@ class App:
         self.save_voice_btn = ttk.Button(saved, text="Save clip as a voice…", command=self.on_save_voice)
         self.save_voice_btn.pack(side="left", padx=4)
         ttk.Button(saved, text="Remember these settings", command=self.on_update_voice).pack(side="left")
+        ttk.Label(saved, text="Gender").pack(side="left", padx=(12, 4))
+        self.gender_var = tk.StringVar(value="-")
+        ttk.Combobox(saved, textvariable=self.gender_var, values=["-", "Male", "Female"], state="readonly",
+                     width=7).pack(side="left")
         self.refresh_voices()
         step1.columnconfigure(1, weight=1)
 
@@ -236,6 +240,8 @@ class App:
         self.load_btn.pack(side="left", padx=8)
         self.all_btn = ttk.Button(buttons, text="Generate with every saved voice", command=self.on_generate_all)
         self.all_btn.pack(side="left")
+        self.pack_btn = ttk.Button(buttons, text="Make game voice pack…", command=self.on_make_pack)
+        self.pack_btn.pack(side="left", padx=8)
 
         # Status
         self.progress = ttk.Progressbar(root, mode="indeterminate")
@@ -256,6 +262,7 @@ class App:
         self.gen_btn.config(state=state)
         self.load_btn.config(state=state)
         self.all_btn.config(state=state)
+        self.pack_btn.config(state=state)
         self.save_voice_btn.config(state=state)
         if busy:
             self.progress.start(12)
@@ -362,6 +369,7 @@ class App:
             return None
         return dict(
             seed=int(seed) if seed else None,
+            gender=None if self.gender_var.get() == "-" else self.gender_var.get().lower(),
             exaggeration=round(self.exag_var.get(), 2),
             cfg_weight=round(self.cfg_var.get(), 2),
             pitch=round(self.pitch_var.get()),
@@ -387,6 +395,7 @@ class App:
         self.cfg_var.set(s["cfg_weight"])
         self.pitch_var.set(s["pitch"])
         self.seed_var.set(str(s["seed"] or ""))
+        self.gender_var.set((s["gender"] or "-").capitalize())
         self.legato_var.set(next(k for k, v in LEGATO_PRESETS.items() if v == s["legato"]))
         self.accent_var.set((s["accent"] or "off").capitalize())
         self.thesaurus_var.set(s["thesaurus"])
@@ -468,6 +477,48 @@ class App:
         else:
             subprocess.Popen(["xdg-open", path])
 
+    def on_make_pack(self):
+        """Every line of a lines file in every saved voice at several pitches (see voice_pack.py)."""
+        import voice_pack
+
+        if not voices.list_voices():
+            messagebox.showwarning("Voice Maker", "Save some voices first (step 1).")
+            return
+        lines_path = filedialog.askopenfilename(
+            title="Choose the game's lines (CSV with id,text, or one line per row)",
+            filetypes=[("Lines", "*.csv *.txt"), ("All files", "*.*")])
+        if not lines_path:
+            return
+        try:
+            lines = voice_pack.read_lines(lines_path)
+        except (OSError, ValueError) as exc:
+            messagebox.showwarning("Voice Maker", str(exc))
+            return
+        pitches = simpledialog.askstring("Voice Maker", "Pitches in semitones:", initialvalue="-8 -4 0 4 8",
+                                         parent=self.root)
+        if not pitches:
+            return
+        try:
+            pitches = [int(p) for p in pitches.replace(",", " ").split()]
+        except ValueError:
+            messagebox.showwarning("Voice Maker", "Pitches must be whole numbers, like -8 -4 0 4 8.")
+            return
+        out_dir = filedialog.askdirectory(title="Folder for the voice pack", initialdir=self.out_var.get())
+        if not out_dir:
+            return
+        saved = voices.list_voices()
+        if not messagebox.askokcancel("Voice Maker", (
+                f"{len(lines)} lines × {len(saved)} voices × {len(pitches)} pitches. Each line is spoken once per "
+                f"voice, so that is {len(lines) * len(saved)} takes, which can take hours. Lines already in the "
+                "folder are skipped. Start?")):
+            return
+
+        def task():
+            path = voice_pack.make_pack(self.cloner, lines, out_dir, saved, pitches, log=self.set_status)
+            self.set_status(f"Done. Voice pack and manifest in {os.path.dirname(path)}")
+
+        self.run_in_background(task)
+
     def phrases(self):
         return [line.strip() for line in self.text.get("1.0", "end").splitlines() if line.strip()]
 
@@ -516,7 +567,7 @@ def run_command_line(args):
                           clean="--raw" not in args)
             print(f"Saved {out_wav}")
             return 0
-        if args[0] in ("voice", "compare"):
+        if args[0] in ("voice", "compare", "pack"):
             # save_voice does the clean-up pass itself.
             return voices.main(args, download=lambda url, start, end, out: download_clip(
                 url, parse_timestamp(start), parse_timestamp(end), out, clean=False))
@@ -534,7 +585,7 @@ def main():
         os.makedirs(DATA_DIR, exist_ok=True)
         sys.stdout = sys.stderr = open(os.path.join(DATA_DIR, "voice_maker.log"), "a", encoding="utf-8", buffering=1)
         print(f"Voice Maker started {' '.join(sys.argv[1:]) or '(window)'}")
-    if len(sys.argv) > 1 and sys.argv[1] in ("download", "say", "clip", "voice", "compare"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("download", "say", "clip", "voice", "compare", "pack"):
         sys.exit(run_command_line(sys.argv[1:]))
     if not ffmpeg_exe():
         tk.Tk().withdraw()

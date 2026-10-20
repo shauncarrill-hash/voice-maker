@@ -74,6 +74,10 @@ jobs:
           Run-App @('say','--device','cpu','--voice','Smoke','--out','smoke_voice.mp3','"Hello from a saved voice."') 30
           Show-Log "Saved voice log"
           if (-not (Test-Path smoke_voice.mp3)) { throw "Saved voice smoke test produced no MP3" }
+          Set-Content -Path lines.csv -Value "id,text`nshop_greet_01,Welcome to the station."
+          Run-App @('pack','lines.csv','--device','cpu','--out-dir','pack','--voices','Smoke','--pitches','0','4') 30
+          Show-Log "Voice pack log"
+          if (-not (Test-Path pack\smoke\+4\shop_greet_01.ogg) -or -not (Test-Path pack\manifest.json)) { throw "Voice pack smoke test produced no OGG/manifest" }
 
       - name: Upload smoke test audio
         if: matrix.edition == 'cpu'

@@ -24,9 +24,10 @@ from chatterbox_harness import DATA_DIR, clean_clip, keep_loudest_parts, run_ffm
 
 VOICES_DIR = os.path.join(DATA_DIR, "voices")
 
-DEFAULT_SETTINGS = dict(exaggeration=0.5, cfg_weight=0.5, pitch=0.0, seed=None, legato=None, accent=None, thesaurus=False,
+DEFAULT_SETTINGS = dict(gender=None, exaggeration=0.5, cfg_weight=0.5, pitch=0.0, seed=None, legato=None, accent=None, thesaurus=False,
                         purr=0.0, trill=0.0, chirp=0.0)
 # What worked best with a cat's voice: yowls only, Meow, all three cat sounds, Medium accent.
+GENDERS = ("male", "female")
 CAT_CLIP_SETTINGS = dict(legato="meow", accent="medium", purr=0.8, trill=0.3, chirp=0.25)
 
 def slugify(name):
@@ -149,7 +150,9 @@ def main(argv, download=None):
     add.add_argument("--raw", action="store_true", help="skip the clean-up pass (declip, denoise, even loudness)")
     for key, value in DEFAULT_SETTINGS.items():
         flag = "--" + key.replace("_", "-")
-        if key in ("legato", "accent"):
+        if key == "gender":
+            add.add_argument(flag, choices=GENDERS, help="for a game picking voices to match a character")
+        elif key in ("legato", "accent"):
             add.add_argument(flag)
         elif key == "seed":
             add.add_argument(flag, type=int, help="repeat takes: the seed of a take you liked")
@@ -161,20 +164,41 @@ def main(argv, download=None):
     vsub.add_parser("list", help="show saved voices")
     rm = vsub.add_parser("remove", help="delete a saved voice")
     rm.add_argument("name")
+    gender = vsub.add_parser("gender", help="mark a saved voice male or female")
+    gender.add_argument("name")
+    gender.add_argument("gender", choices=GENDERS)
+    pack = sub.add_parser("pack", help="every game line in every saved voice at several pitches, plus a manifest")
+    pack.add_argument("lines", help="CSV with id,text columns, or a text file with one line per row")
+    pack.add_argument("--out-dir", required=True)
+    pack.add_argument("--pitches", nargs="+", type=int, default=[-8, -4, 0, 4, 8], help="semitones (default: -8 -4 0 4 8)")
+    pack.add_argument("--voices", nargs="+", metavar="NAME", help="only these voices (default: all)")
+    pack.add_argument("--format", choices=["ogg", "mp3", "wav"], default="ogg")
+    pack.add_argument("--force", action="store_true", help="render everything again, even lines already done")
     compare = sub.add_parser("compare", help="say one line in every saved voice")
     compare.add_argument("text")
     compare.add_argument("--out-dir", required=True)
     compare.add_argument("--voices", nargs="+", metavar="NAME", help="only these voices (default: all)")
     compare.add_argument("--device", choices=["cuda", "mps", "cpu"])
+    pack.add_argument("--device", choices=["cuda", "mps", "cpu"])
     args = parser.parse_args(argv)
 
-    if args.cmd == "compare":
+    if args.cmd == "pack":
+        import voice_pack
+
+        chosen = [get_voice(n) for n in args.voices] if args.voices else None
+        path = voice_pack.make_pack(VoiceCloner(device=args.device), voice_pack.read_lines(args.lines), args.out_dir,
+                                    chosen, args.pitches, args.format, args.force)
+        print(f"Saved {path}")
+    elif args.cmd == "compare":
         chosen = [get_voice(n) for n in args.voices] if args.voices else None
         paths = render_all(VoiceCloner(device=args.device), args.text, args.out_dir, chosen)
         print("\n".join(f"Saved {p}" for p in paths))
     elif args.action == "list":
         for v in list_voices():
             print(f"{v['name']}: {v['source']}  {v['settings']}")
+    elif args.action == "gender":
+        update_settings(args.name, gender=args.gender)
+        print(f"{args.name} is {args.gender}")
     elif args.action == "remove":
         remove_voice(args.name)
         print(f"Removed {args.name}")

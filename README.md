@@ -65,6 +65,27 @@ With an NVIDIA GPU each phrase takes a few seconds. On CPU it works but expect t
 
 **Saved voices:** once a reference clip sounds right, click *Save clip as a voice…* and give it a name. The clip is cleaned up (rumble and hiss removed, silence trimmed, loudness evened out) and stored with the current settings in a `voices` folder on your computer (next to the models: `%LOCALAPPDATA%\VoiceMaker\voices` for the .exe), never in the repo. Pick a voice from *Saved voice* to make it the reference and bring its settings back; *Remember these settings* updates them. *Generate with every saved voice* speaks your phrases in each voice, one folder per voice, so you can compare them.
 
+## Game voice packs
+
+*Make game voice pack…* (or `pack` on the command line) speaks every line of a game in every saved voice at several pitches, for a game that gives each character a voice: say 7 voices × pitches −8, −4, 0, +4 and +8 gives 35 voice/pitch combinations. Each line is spoken once per voice, with the voice's settings and seed, and the pitch variants are made from that same take, so every pitch says the line the same way and the extra pitches cost almost no time. Mark each voice male or female (*Gender* next to *Saved voice*, or `voice gender NAME female`) so the game can match a character's portrait.
+
+The lines file is a CSV with an `id` and a `text` column, for example:
+
+```csv
+id,text
+shop_greet_01,"Welcome to the station, pilot."
+shop_buy_fuel,Fuel's loaded. Safe travels.
+```
+
+The id is what the game looks up, so keep it when you change the wording. (A plain text file with one line per row works too; ids are then made from the text.) The output folder gets `<voice>/<pitch>/<id>.ogg` (OGG Vorbis, which Godot imports directly; `--format mp3` or `wav` also work) and a `manifest.json` listing each voice's name, gender and pitch variants, and each line's text and file per variant with its length. Running it again only renders lines that are new or changed (or whose voice settings changed), so a long run can be stopped and restarted, and adding a line costs one take per voice.
+
+```bash
+.venv/bin/python voice_maker.py pack lines.csv --out-dir voice_pack
+.venv/bin/python voice_maker.py pack lines.csv --out-dir voice_pack --pitches -8 -4 0 4 8 --voices "Long Johnson" Tabby
+```
+
+Each take is about 10 to 20 seconds on a mid-range NVIDIA card, so 300 lines in 7 voices is an overnight run. Close the Voice Maker window first if you run it from the command line: two copies of the model don't fit on an 8 GB card.
+
 ## Command line
 
 The harness works without the window too:
