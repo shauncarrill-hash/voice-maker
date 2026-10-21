@@ -17,10 +17,12 @@ import os
 import voices as library
 from chatterbox_harness import save_mp3
 
+# Short, like the game's lines (2 to 4 words each).
 TEST_LINES = [
-    "Welcome to my station, let's make a deal!",
-    "Kneel to your new ruler.",
-    "Darling, you're in my lane.",
+    "Welcome, trader!",
+    "Kneel to the Crown.",
+    "Darling, move aside.",
+    "Ejecting cargo!",
 ]
 TARGET = 0.8  # average share of words understood that counts as clear enough
 GENTLE = dict(accent=None, purr=0.2, trill=0.0, chirp=0.0)
