@@ -6,3 +6,5 @@ models/
 work/
 output/
 *.log
+voices/
+samples/

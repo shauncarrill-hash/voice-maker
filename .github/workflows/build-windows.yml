@@ -62,14 +62,29 @@ jobs:
           Run-App @('clip','https://www.youtube.com/watch?v=jNQXAC9IVRw','0:01','0:12','yt.wav') 5
           if (Test-Path yt.wav) { Write-Host "::notice::YouTube clip download worked"; $ref = "yt.wav" } else { Show-Log "YouTube clip log"; $ref = "ref.wav" }
           $start = Get-Date
-          Run-App @('say','--device','cpu','--ref',$ref,'--out','smoke.mp3','"Hello, this is a test of Voice Maker."') 45
+          Run-App @('say','--device','cpu','--ref',$ref,'--pitch','-3','--out','smoke.mp3','"Hello, this is a test of Voice Maker."') 45
           Show-Log "Voice generation log"
           if (-not (Test-Path smoke.mp3)) { throw "Smoke test produced no MP3" }
           $dur = & ($env:FFMPEG_BIN -replace 'ffmpeg.exe$','ffprobe.exe') -v error -show_entries format=duration -of csv=p=0 smoke.mp3
           Write-Host "::notice::Smoke test MP3: $dur seconds, generated in $([int]((Get-Date)-$start).TotalSeconds) s (includes model download)"
-          Run-App @('say','--device','cpu','--ref',$ref,'--legato','meow','--purr','0.8','--trill','0.3','--chirp','0.25','--out','smoke_meow.mp3','"Hello there. Meow."') 30
+          Run-App @('say','--device','cpu','--ref',$ref,'--legato','meow','--seed','1234','--cat-words','--cat-accent','--purr','0.8','--trill','0.3','--chirp','0.25','--out','smoke_meow.mp3','"Hello there. Meow."') 30
           Show-Log "Cat legato log"
           if (-not (Test-Path smoke_meow.mp3)) { throw "Cat legato smoke test produced no MP3" }
+          Run-App @('voice','add','Smoke','--file',$ref,'--cat-clip') 5
+          Run-App @('say','--device','cpu','--voice','Smoke','--out','smoke_voice.mp3','"Hello from a saved voice."') 30
+          Show-Log "Saved voice log"
+          if (-not (Test-Path smoke_voice.mp3)) { throw "Saved voice smoke test produced no MP3" }
+          Set-Content -Path lines.csv -Value "id,text`nshop_greet_01,Welcome to the station."
+          Run-App @('pack','lines.csv','--device','cpu','--out-dir','pack','--voices','Smoke','--pitches','0','4') 30
+          Show-Log "Voice pack log"
+          if (-not (Test-Path pack\smoke\+4\shop_greet_01.ogg) -or -not (Test-Path pack\manifest.json)) { throw "Voice pack smoke test produced no OGG/manifest" }
+          Run-App @('say','--device','cpu','--voice','Smoke','--tries','2','--out','smoke_tries.mp3','"Hello there."') 30
+          Show-Log "Best of two takes log"
+          if (-not (Test-Path smoke_tries.mp3)) { throw "Best-of-takes smoke test produced no MP3" }
+          Run-App @('voice','tune','Smoke','--device','cpu','--seeds','1','--candidates','2','--lines','"Hello there."','--out-dir','tune') 30
+          Show-Log "Voice tune log"
+          if (-not (Test-Path tune\smoke\report.txt)) { throw "Voice tune smoke test produced no report" }
+          Write-Host "::notice title=Voice tune report::$((Get-Content tune\smoke\report.txt) -join '%0A')"
 
       - name: Upload smoke test audio
         if: matrix.edition == 'cpu'
@@ -79,6 +94,9 @@ jobs:
           path: |
             smoke.mp3
             smoke_meow.mp3
+            smoke_voice.mp3
+            smoke_tries.mp3
+            tune
             yt.wav
           if-no-files-found: ignore
 

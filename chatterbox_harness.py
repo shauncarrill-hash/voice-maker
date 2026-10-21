@@ -11,6 +11,7 @@ Command line use (handy for testing without the GUI):
 
 import argparse
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -32,6 +33,7 @@ MODEL_FILES = ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tok
 # Chatterbox stops after ~1000 speech tokens (about 40 s), so long text is spoken in chunks.
 MAX_CHUNK_CHARS = 250
 CHUNK_GAP_SECONDS = 0.25
+GOOD_ENOUGH = 0.95  # with tries, stop making takes once one scores this (see intelligibility.py)
 
 
 def model_is_downloaded(model_dir=MODEL_DIR):
@@ -108,19 +110,149 @@ def run_ffmpeg(args, input=None):
         raise RuntimeError("ffmpeg failed:\n" + result.stderr.decode(errors="replace")[-1500:])
 
 
-def save_mp3(audio, sample_rate, mp3_path, bitrate="192k"):
-    """Write a mono float waveform (-1..1) to an MP3 using ffmpeg."""
+# Encoder arguments by file extension (OGG Vorbis is what Godot imports best).
+CODECS = {".mp3": ["-codec:a", "libmp3lame", "-b:a", "192k"], ".ogg": ["-codec:a", "libvorbis", "-q:a", "6"],
+          ".wav": ["-codec:a", "pcm_s16le"]}
+
+
+def save_audio(audio, sample_rate, path):
+    """Write a mono float waveform (-1..1) to an .mp3, .ogg or .wav file using ffmpeg."""
     audio = np.asarray(audio, dtype=np.float32).reshape(-1)
     pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()
-    os.makedirs(os.path.dirname(os.path.abspath(mp3_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     run_ffmpeg(
-        [
-            "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
-            "-codec:a", "libmp3lame", "-b:a", bitrate,
-            mp3_path,
-        ],
+        ["-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
+         *CODECS[os.path.splitext(path)[1].lower()], path],
         input=pcm,
     )
+
+
+def save_mp3(audio, sample_rate, mp3_path):
+    save_audio(audio, sample_rate, mp3_path)
+
+
+def decode_audio(path, sample_rate=24000):
+    """Decode any audio file to mono float32 at sample_rate with ffmpeg."""
+    exe = ffmpeg_exe()
+    if not exe:
+        raise RuntimeError("ffmpeg was not found.")
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    out = subprocess.run(
+        [exe, "-loglevel", "error", "-i", path, "-f", "f32le", "-ac", "1", "-ar", str(sample_rate), "pipe:1"],
+        capture_output=True, check=True, creationflags=flags,
+    ).stdout
+    return np.frombuffer(out, dtype=np.float32)
+
+
+# Clean-up pass for downloaded clips: repair clipped peaks, remove clicks, cut rumble and codec hiss,
+# denoise, trim silence at both ends (not in the middle), and even out loudness without re-clipping.
+CLEAN_FILTER = (
+    "adeclip,adeclick,highpass=f=80,lowpass=f=11000,afftdn=nf=-25,"
+    "silenceremove=start_periods=1:start_threshold=-45dB,areverse,"
+    "silenceremove=start_periods=1:start_threshold=-45dB,areverse,"
+    "loudnorm=I=-18:TP=-2"
+)
+
+
+def clean_clip(src, dst):
+    """Save a cleaned-up, mono 24 kHz copy of src at dst (see CLEAN_FILTER)."""
+    run_ffmpeg(["-i", src, "-af", CLEAN_FILTER, "-ac", "1", "-ar", "24000", dst])
+    return dst
+
+
+def unused_path(path):
+    """path, or path with _2, _3 ... added before the extension if that file already exists."""
+    stem, ext = os.path.splitext(path)
+    n = 2
+    while os.path.exists(path):
+        path, n = f"{stem}_{n}{ext}", n + 1
+    return path
+
+
+def end_at_last_word(audio, sample_rate, text="", pause_seconds=0.6, below_loud_db=22.0, fade_seconds=0.05):
+    """Cut Chatterbox's trailing babble: everything after a long pause once the text has had time
+    to be said, and the quiet end.
+
+    Chatterbox sometimes keeps going after the text is done, with a pause and then a murmured
+    echo of the last word. A long pause only counts as the end once the speech before it is at
+    least as long as text would take even at a fast pace (~14 characters a second), so a pause
+    at "..." in the middle of the text is kept.
+    """
+    min_speech = 0.07 * len(text.strip())
+    hop = sample_rate // 50  # 20 ms
+    frames = len(audio) // hop
+    if frames < 10:
+        return audio
+    rms = np.sqrt(np.mean(audio[: frames * hop].reshape(frames, hop) ** 2, axis=1) + 1e-12)
+    db = np.convolve(20 * np.log10(rms), np.ones(5) / 5, mode="same")
+    voiced = db > np.percentile(db, 95) - below_loud_db
+    if not voiced.any():
+        return audio
+    first = int(np.argmax(voiced))
+    end, quiet = frames, 0
+    for i in range(first, frames):
+        if voiced[i]:
+            end, quiet = i + 1, 0
+        else:
+            quiet += 1
+            if quiet * hop >= pause_seconds * sample_rate and end * hop >= min_speech * sample_rate:
+                break
+    end = min(len(audio), (end + 2) * hop)  # keep 40 ms of release
+    out = audio[:end].copy()
+    fade = min(len(out), int(fade_seconds * sample_rate))
+    out[len(out) - fade:] *= np.linspace(1.0, 0.0, fade, dtype=out.dtype)
+    return out
+
+
+def keep_loudest_parts(wav_path, out_path, max_seconds=5.0, below_peak_db=15.0, gap_seconds=0.15,
+                       sample_rate=24000):
+    """Save only the loud stretches of a clip, joined by short gaps (at most max_seconds).
+
+    Made for animal clips: a cat's yowls with quiet humming in between. Chatterbox copies the
+    delivery of its reference, so the humming would otherwise come out as moaning.
+    """
+    import wave
+
+    audio = decode_audio(wav_path, sample_rate)
+    hop = sample_rate // 50  # 20 ms
+    frames = len(audio) // hop
+    if frames == 0:
+        raise ValueError("The reference clip is empty.")
+    rms = np.sqrt(np.mean(audio[: frames * hop].reshape(frames, hop) ** 2, axis=1) + 1e-12)
+    db = 20 * np.log10(rms)
+    smooth = np.convolve(db, np.ones(5) / 5, mode="same")
+    loud = smooth > smooth.max() - below_peak_db
+    # Group loud frames into stretches of at least 0.2 s, padded by 40 ms on each side.
+    parts, start = [], None
+    for i, on in enumerate(np.append(loud, False)):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            if i - start >= 10:
+                parts.append((max(0, (start - 2) * hop), min(len(audio), (i + 2) * hop)))
+            start = None
+    if not parts:
+        parts = [(0, len(audio))]
+    gap = np.zeros(int(gap_seconds * sample_rate), dtype=np.float32)
+    pieces, total = [], 0
+    limit = int(max_seconds * sample_rate)
+    for a, b in parts:
+        piece = audio[a:b][: limit - total]
+        if pieces:
+            pieces.append(gap)
+        pieces.append(piece)
+        total += len(piece) + len(gap)
+        if total >= limit:
+            break
+    out = np.concatenate(pieces)
+    out = out / (np.max(np.abs(out)) or 1.0) * 0.9
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with wave.open(out_path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes((out * 32767).astype("<i2").tobytes())
+    return out_path
 
 
 class VoiceCloner:
@@ -150,21 +282,54 @@ class VoiceCloner:
         self.model = ChatterboxTTS.from_local(self.model_dir, self.device)
         self.log("Chatterbox loaded.")
 
-    def set_reference(self, wav_path, exaggeration=0.5):
-        """Analyse the reference clip once; later phrases reuse the result."""
+    def set_reference(self, wav_path, exaggeration=0.5, loud_parts_only=False):
+        """Analyse the reference clip once; later phrases reuse the result.
+
+        loud_parts_only: use only the clip's loudest stretches (a cat's yowls) as the voice.
+        """
         self.load()
-        key = (os.path.abspath(wav_path), os.path.getmtime(wav_path))
+        key = (os.path.abspath(wav_path), os.path.getmtime(wav_path), loud_parts_only)
         if key != self._reference:
+            if loud_parts_only:
+                self.log("Keeping only the loudest parts of the reference…")
+                wav_path = keep_loudest_parts(wav_path, os.path.join(DATA_DIR, "work", "reference_loud.wav"))
             self.log("Analysing reference voice…")
             self.model.prepare_conditionals(wav_path, exaggeration=exaggeration)
             self._reference = key
 
-    def speak(self, text, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None, cat_sounds=None):
-        """Return a mono float32 waveform at self.sample_rate for text.
+    def speak(self, text, pitch=0.0, **kwargs):
+        """Return a mono float32 waveform at self.sample_rate for text. See speak_variants for the options."""
+        return self.speak_variants(text, [pitch], **kwargs)[pitch]
+
+    def speak_variants(self, text, pitches, exaggeration=0.5, cfg_weight=0.5, temperature=0.8, legato=None,
+                       cat_sounds=None, accent=None, end_at_words=True, thesaurus=False, seed=None, tries=1,
+                       judge=None):
+        """Say text once and return {pitch: waveform} for each pitch, so the variants match word for word.
 
         legato: name of a cat_legato preset ("legato", "meow", "kitten") or None for plain speech.
-        cat_sounds: optional {"purr": 0..1, "trill": 0..1, "chirp": 0..1} added on top of the preset.
+        cat_sounds: optional {"purr": 0..1, "trill": 0..1, "chirp": 0..1} added on top of the preset
+        (any other cat_legato.legato setting, such as hum or slur, can go in here too).
+        accent: None, or a cat_accent strength ("light", "medium", "strong") to respell the text with first
+        ("river" -> "rriwerr").
+        end_at_words: stop at the last spoken word, cutting any trailing babble or echo.
+        thesaurus: swap hard-to-say words for easier synonyms first ("sleep" -> "doze").
+        pitches: semitones to raise the voice (negative lowers it), on top of the legato preset's own.
+        seed: makes the take repeatable: the same text, settings and seed give the same audio.
+        None picks a random one; either way the seed used is in self.last_seed.
+        tries: takes to make of each sentence, keeping the one judge (an intelligibility.Judge, made
+        when needed) understands best. self.last_score is the average score of the kept takes.
         """
+        if not seed:
+            seed = random.randrange(1, 1_000_000)
+        self.last_seed = seed
+        self.log(f"Seed: {seed}")
+        if thesaurus:
+            from cat_thesaurus import cat_words
+
+            swapped = cat_words(text)
+            if swapped != text:
+                self.log(f"Cat thesaurus: {swapped}")
+            text = swapped
         if cat_sounds and any(cat_sounds.values()) and not legato:
             legato = "legato"
         if self._reference is None:
@@ -176,29 +341,75 @@ class VoiceCloner:
 
             settings = {**PRESETS[legato], **(cat_sounds or {})}
             # One sentence at a time so the pauses between sentences survive the effect.
-            chunks = [piece for sentence in re.split(r"(?<=[.!?])\s+", text) for piece in split_text(sentence)]
+            chunks = [piece for sentence in re.split(r"(?<=[^.][.!?])\s+", text) for piece in split_text(sentence)]
         else:
             chunks = split_text(text)
-        parts = []
+        if not chunks:
+            raise ValueError("Nothing to say: the text is empty.")
+        if tries > 1 and judge is None:
+            from intelligibility import Judge
+
+            judge = self.judge = getattr(self, "judge", None) or Judge(device=self.device, log=self.log)
+        # The take is judged at the pitch nearest the voice's own.
+        judged_pitch = min(pitches, key=abs)
+
+        def render(wav, pitch):
+            if legato:
+                return hum_through(wav, self.sample_rate, **{**settings, "pitch": settings["pitch"] + pitch})
+            if pitch:
+                from cat_legato import shift_pitch
+
+                return shift_pitch(wav, self.sample_rate, pitch)
+            return wav
+
+        parts = {p: [] for p in pitches}
+        scores = []
         gap = np.zeros(int(self.sample_rate * CHUNK_GAP_SECONDS), dtype=np.float32)
-        for chunk in chunks:
-            with torch.inference_mode():
-                wav = self.model.generate(
-                    chunk,
-                    exaggeration=exaggeration,
-                    cfg_weight=cfg_weight,
-                    temperature=temperature,
-                )
-            wav = wav.squeeze().cpu().numpy().astype(np.float32)
+        for n, chunk in enumerate(chunks):
+            spoken = chunk
+            if accent:
+                from cat_accent import cat_accent
+
+                spoken = cat_accent(chunk, accent)
+                self.log(f"Cat accent: {spoken}")
+            best = None
+            for k in range(max(1, tries)):
+                # Seeded per chunk and try, so each sentence of a longer text repeats too.
+                s = seed + n + 7919 * k
+                random.seed(s)
+                np.random.seed(s % 2**32)
+                torch.manual_seed(s)
+                with torch.inference_mode():
+                    wav = self.model.generate(spoken, exaggeration=exaggeration, cfg_weight=cfg_weight,
+                                              temperature=temperature)
+                wav = wav.squeeze().cpu().numpy().astype(np.float32)
+                if end_at_words:
+                    trimmed = end_at_last_word(wav, self.sample_rate, spoken)
+                    if len(wav) - len(trimmed) > self.sample_rate // 2:
+                        self.log(f"Cut {(len(wav) - len(trimmed)) / self.sample_rate:.1f} s of trailing babble")
+                    wav = trimmed
+                if tries <= 1:
+                    best = (None, wav, {})
+                    break
+                out = render(wav, judged_pitch)
+                score, heard = judge.score(out, self.sample_rate, chunk)
+                self.log(f"Take {k + 1}/{tries}: {score:.2f} heard {heard!r}")
+                if best is None or score > best[0]:
+                    best = (score, wav, {judged_pitch: out})
+                if score >= GOOD_ENOUGH:
+                    break
+            score, wav, done = best
+            if score is not None:
+                scores.append(score)
             if legato:
                 self.log("Applying cat legato…")
-                wav = hum_through(wav, self.sample_rate, **settings)
-            if parts:
-                parts.append(gap)
-            parts.append(wav)
-        if not parts:
-            raise ValueError("Nothing to say: the text is empty.")
-        return np.concatenate(parts)
+            for pitch in pitches:
+                out = done[pitch] if pitch in done else render(wav, pitch)
+                if parts[pitch]:
+                    parts[pitch].append(gap)
+                parts[pitch].append(out)
+        self.last_score = sum(scores) / len(scores) if scores else None
+        return {p: np.concatenate(parts[p]) for p in pitches}
 
     def speak_to_mp3(self, text, mp3_path, **kwargs):
         save_mp3(self.speak(text, **kwargs), self.sample_rate, mp3_path)
@@ -211,25 +422,50 @@ def main(argv=None):
     sub.add_parser("download", help="download the model weights into ./models/chatterbox")
     say = sub.add_parser("say", help="speak text in the voice of a reference clip")
     say.add_argument("text")
-    say.add_argument("--ref", required=True, help="reference voice clip (wav/mp3)")
+    ref = say.add_mutually_exclusive_group(required=True)
+    ref.add_argument("--ref", help="reference voice clip (wav/mp3)")
+    ref.add_argument("--voice", help="a saved voice (see: voice list); its settings are used unless given here")
     say.add_argument("--out", required=True, help="output MP3 path")
     say.add_argument("--device", choices=["cuda", "mps", "cpu"])
     say.add_argument("--model-dir", default=MODEL_DIR)
-    say.add_argument("--exaggeration", type=float, default=0.5)
-    say.add_argument("--cfg-weight", type=float, default=0.5)
+    say.add_argument("--exaggeration", type=float)
+    say.add_argument("--cfg-weight", type=float)
+    say.add_argument("--loud-parts-only", action="store_true",
+                     help="use only the reference's loudest stretches, e.g. a cat's yowls without the humming")
     say.add_argument("--legato", choices=["legato", "meow", "kitten"], help="hum through word gaps (cat voice)")
+    say.add_argument("--cat-accent", nargs="?", const="medium", choices=["light", "medium", "strong"],
+                     help="respell the text the way a cat would say it (default strength: medium)")
     for sound in ("purr", "trill", "chirp"):
-        say.add_argument(f"--{sound}", type=float, default=0.0, help=f"0..1 amount of cat {sound}s (implies --legato)")
+        say.add_argument(f"--{sound}", type=float, help=f"0..1 amount of cat {sound}s (implies --legato)")
+    say.add_argument("--cat-words", action="store_const", const=True,
+                     help="swap words a cat would struggle with for easier synonyms (sleep -> doze)")
+    say.add_argument("--pitch", type=float, help="semitones to raise the voice (negative lowers it)")
+    say.add_argument("--seed", type=int, help="repeat a take: same text, settings and seed give the same audio")
+    say.add_argument("--tries", type=int,
+                     help="takes to make of each sentence, keeping the one a speech-to-text check understands best")
+    say.add_argument("--keep-tail", action="store_true",
+                     help="keep whatever Chatterbox says after the last word (by default it is cut)")
     args = parser.parse_args(argv)
 
     if args.cmd == "download":
         download_model()
         return 0
+    import voices
+
+    given = dict(exaggeration=args.exaggeration, cfg_weight=args.cfg_weight, legato=args.legato,
+                 accent=args.cat_accent, thesaurus=args.cat_words, pitch=args.pitch, seed=args.seed, tries=args.tries, purr=args.purr, trill=args.trill, chirp=args.chirp)
+    settings = dict(voices.DEFAULT_SETTINGS)
+    ref = args.ref
+    if args.voice:
+        voice = voices.get_voice(args.voice)
+        settings.update(voice["settings"])
+        ref = voice["reference"]
+    settings.update({k: v for k, v in given.items() if v is not None})
     cloner = VoiceCloner(device=args.device, model_dir=args.model_dir)
-    cloner.set_reference(args.ref, exaggeration=args.exaggeration)
-    cloner.speak_to_mp3(args.text, args.out, exaggeration=args.exaggeration, cfg_weight=args.cfg_weight,
-                        legato=args.legato, cat_sounds={"purr": args.purr, "trill": args.trill, "chirp": args.chirp})
-    print(f"Saved {args.out}")
+    cloner.set_reference(ref, exaggeration=settings["exaggeration"], loud_parts_only=args.loud_parts_only)
+    cloner.speak_to_mp3(args.text, args.out, end_at_words=not args.keep_tail, **voices.speak_kwargs(settings))
+    score = f", understood {cloner.last_score:.0%}" if getattr(cloner, "last_score", None) is not None else ""
+    print(f"Saved {args.out} (seed {cloner.last_seed}{score})")
     return 0
 
 
